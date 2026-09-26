@@ -15,8 +15,6 @@ happens on your machine — no cloud, no telemetry.
 
 <a id="english"></a>
 
-# EN | British English
-
 <a id="whats-new"></a>
 ## What's new in P3.44.5
 
