@@ -1,6 +1,6 @@
 ================================================================
   SpeechStudio — Fejlesztési Napló (Teljes Lista)
-  2026-06-30 — 2026-08-11
+  2026-06-30 — 2026-09-26
 ================================================================
 
 Ez a dokumentum az összes elvégzett fejlesztést tartalmazza.
@@ -3005,3 +3005,99 @@ VERIFIKÁCIÓ (ebben a menetben):
   114+242+34, a 10 perces hívási korlát miatt).
 - Launch smoke (valódi belépési út): 11/11.
 - Környezet: friss sandbox — PySide6 6.11.2 + /tmp/gllibs újratelepítve.
+
+================================================================
+  P3.44.5 — STABILIZÁCIÓ / INTEGRITÁS 1. FÁZIS:
+        BATCH-ABLAK ÉLETCIKLUS + BLOKK-TUDATOS
+        PROVENIENCIA-PÁROSÍTÁS
+================================================================
+Alap: P3.44.4-B (55a78f4, GUINEO_P3.44.4_current.zip). A fázis
+pontosan három célt tartalmazott a kutatási audit futásidőben bizonyított
+leletei alapján (archivált jelentés: docs/audits/P3_44_5_RESEARCH_AUDIT.md);
+más viselkedés szándékosan nem változott. Implementációs jegyzőkönyv:
+docs/design/P3_44_5_STABILISATION_NOTES.md.
+
+1. BATCH-ABLAK ÉLETCIKLUS / ELAVULT FIGYELŐ (audit B+D, kritikus):
+   A BatchGenerationDialog.closeEvent elengedi a manager figyelőjét
+   (_release_manager), az ablakOBJEKTUM viszont túléli a bezárást, és a
+   jelenet-tudatos egypéldányos politika (_focus_existing_batch_dialog)
+   ugyanazt a zárt ablakot fókuszálja újra — figyelőújra-regisztráció
+   nélkül. Az újra megnyitott ablak süket lett a BatchManager eseményeire:
+   a sorállapot-pillek megfagytak, a Start letiltva, a Pause/Stop
+   engedélyezve maradt a befejezés után is; csak a Pause/Stop kézi
+   megnyomása frissített (kezelőik lokális újrarajzolása miatt). A manager
+   állapotgépe végig helyes volt — a hiba tisztán életciklus-/figyelő-
+   tulajdonos kérdés, ezért a BatchManager NEM módosult.
+   JAVÍTÁS (ui/panels/batch_generation.py): a showEvent minden megjelenítést
+   átfuttat a _connect_manager-en, ami most IDEMPOTENS: no-op, ha a MI
+   pontos figyelőnk regisztrálva van — a manager TÉNYLEGES
+   on_changed_listeners listája szerint ellenőrizve (sosem második
+   könyvelő zászló); a listener/marshaler callback-objektumok egyszer
+   készülnek és újrahasznosulnak, így az identitás-alapú dedupe pontosan
+   egy logikai figyelőt garantál tetszőleges számú close/reopen cikluson
+   át; a _prev_marshal sosem adoptálja a saját marshalerünket; a destroyed
+   biztonsági handler egyszer kötődik. A showEvent emellett teljes
+   _on_manager_changed újraszinkront indít a manager igazságából — ez fedi
+   azt az esetet, amikor a köteg az ablak zárva tartása alatt futott le,
+   és már soha nem jön több esemény. Jelenet-/mód-identitás,
+   egypéldányos politika, manual+scene mód, BatchManager-szemantika:
+   változatlanul.
+
+2. PROVENIENCIA-PÁROSÍTÁS BLOKKIDENTITÁS SZERINT (audit §11/§15):
+   A slot_of_asset globális part_index POZÍCIÓ szerint párosította az
+   assetet a várt slothoz, a block_id-t figyelmen kívül hagyva —
+   szerkesztés után a régi hang pozíció-egyezés esetén lefedettségnek
+   tekintetett, és a Combine Scene régi hangot rakhatott az új struktúrába
+   (végponttól végpontig reprodukálva az auditban).
+   JAVÍTÁS (engine/audio_provenance.py): blokk-származtatott slothoz
+   UGYANAZ a block_id kell az asseten (mindkét oldal identitást hordoz →
+   az identitásnak egyeznie kell); plain slothoz csak plain asset
+   (fajta-egyezés); eltérés vagy már nem létező pozíció → None (nincs
+   csendes visszabukás a legacy szintézisre); a legacy (slot-struktúra
+   nélküli jelenetek / scene=None) dokumentált szintézis-útvonala betűről
+   betűre változatlan. Az érvényes párosítás (azonos block_id + azonos
+   pozíció) változatlan. Ismert, dokumentált maradvány (P3_44_5 §5): az
+   azonos block_id-jú, de más partsorokra bontott blokk pozíció szerint
+   még illeszkedhet — a teljes zárás a halasztott plan/fingerprint réteg
+   feladata.
+
+3. TESZTEK (új): tests/test_p3_44_5_stabilisation_integrity.py — 29 teszt,
+   1005 sor: tiszta életciklus-diagnosztika (7), újrahasznosítási politika
+   (§16 1–5. eset), zárt→újra megnyitás→generálás teljes reprodukció +
+   sosem zárt kontroll, „lefutott amíg zárva volt" tünet-ellenőrzés,
+   blokk-tudatos párosítás (érvényes/érvénytelen/legacy/visszabukás-
+   tiltó mátrix), jelenetszintű identitáskeveredés + slotszintű pontosság
+   + Combine-blokkolók, végponttól végpontig (valódi író + valódi
+   materializáció). Régi-új bizonyítás git stash-sel: a RÉGI kódon 17
+   vörös / 12 zöld (pontosan a hibadetektorok: 8 életciklus + 9
+   proveniencia; a 12 zöld az érvényes-párosítás/kontroll/legacy
+   viselkedés, ami nem változhat), az ÚJ kódon 29/29.
+
+VERIFIKÁCIÓ (ebben a menetben):
+- Fókuszált akkumulátor a javítások után: P3.44.4 három fájl 56/56;
+  P3.44.1+2+3+history_player 77/77; P3.35 38/38; P3.30+P3.41 48/48;
+  launch smoke 11/11 (valódi belépési út) — összesen 1425 egyedi zöld
+  teszt-futtatás a batch-ben.
+- Környezeti megjegyzés (dokumentált recurrencia): a tesztek offscreen
+  futnak; headless Linuxon az EGL/GL futásidejű könyvtárak
+  (libegl1/libgl1/libglvnd0/libglx0) telepítése szükséges a Qt importhoz.
+
+DOKUMENTÁCIÓ ÉS KIADÁS (a fázis zárása, e menet):
+- README.md átstrukturálva: kizárólag brit angol (új szakaszok: What's
+  new in P3.44.5, Release history, For developers — repository and
+  tests); a teljes magyar felhasználói dokumentáció új README_HU.md
+  fájlba került (tükörtartalom + Újdonságok / Kiadástörténet /
+  Fejlesztőknek szakaszokkal). README_START_HERE.txt a két útmutatóra
+  mutat. A dokumentáció-validációs tesztek (test_p3_37) a két-fájlos
+  szerkezetre lettek átírva és BŐVÍTVE (kereszthivatkozások, GitHub-tároló
+  hivatkozás, aktuális fázis dokumentáltsága): 33/33 zöld.
+- docs/audits/P3_44_5_RESEARCH_AUDIT.md: a kutatási audit jelentésének
+  archivált, szó szerinti másolata provenance-előszóval;
+  docs/audits/BASELINE_SECURITY_ARCHITECTURE_AUDIT.md: a remediation-
+  engagementet nyitó független baseline-audit archivált másolata.
+- docs/governance/OPEN_BUGS.md: P3.44.5 audit-regiszter (2 CLOSED +
+  nyitott, halasztott tételek).
+- GitHub-közzététel: AGE-T/GUINEO — teljes forrás + releases/ mappa
+  (minden verzió-ZIP a P3.23-tól) + GUINEO_P3.44.5_current.zip kiadás a
+  korábbi konvenció szerint (a P3.44.4-es 279 fájl + README_HU.md + új
+  tesztfájl + két tervezési/audit-dokumentum).

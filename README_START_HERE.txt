@@ -13,9 +13,11 @@ WHAT THIS IS:
 
   All processing is local. No cloud, no telemetry.
 
-  The complete user guide (Hungarian + English) is README.md in this
-  folder. Third-party licences: THIRD_PARTY_LICENSES.md and
-  LICENSE_HIGGS_TTS_3.txt.
+  The complete user guide is README.md (British English) in this
+  folder; the Hungarian guide is README_HU.md. Third-party licences:
+  THIRD_PARTY_LICENSES.md and LICENSE_HIGGS_TTS_3.txt.
+
+  Source code and all version ZIPs: https://github.com/AGE-T/GUINEO
 
 REQUIREMENTS:
   - Windows 10/11 (64-bit)
@@ -155,7 +157,8 @@ PROJECT STRUCTURE:
   bootstrap.py        <- Environment setup (runs automatically)
   SpeechStudio.py     <- Application entry point
   requirements.txt    <- Python dependencies
-  README.md           <- Full user guide (Hungarian + English)
+  README.md           <- Full user guide (British English)
+  README_HU.md        <- Teljes magyar felhasználói útmutató
   engine\             <- Backend (model, prompt builder, audio, batch, etc.)
   ui\                 <- Frontend (PySide6 window, panels, theme)
   spec\               <- Project specifications

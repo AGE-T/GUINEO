@@ -4,10 +4,12 @@ SpeechStudio — P3.37 GUINEO Branding + Documentation validation tests
 
 Validation for the GUINEO rebrand round:
 
-  A. DOCUMENTATION (file-level, §54 of the brief):
-     - README.md exists and carries BOTH language sections
-       (HU | Magyar  +  EN | British English) describing the same
-       current functionality.
+  A. DOCUMENTATION (file-level, §54 of the brief; revised in the
+     P3.44.5 docs round: README.md is now British-English only and the
+     Hungarian documentation lives in the separate README_HU.md):
+     - README.md exists (EN | British English) and README_HU.md exists
+       (HU | Magyar); the two describe the same current functionality
+       and cross-link each other.
      - GUINEO is the visible product identity; obsolete user-facing
        SpeechStudio branding is gone from user docs (historical /
        technical mentions — SpeechStudio.py, SpeechStudio_clean.zip,
@@ -83,6 +85,7 @@ APP = QApplication.instance() or QApplication(sys.argv)
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 README_PATH = os.path.join(_ROOT, "README.md")
+README_HU_PATH = os.path.join(_ROOT, "README_HU.md")
 START_HERE_PATH = os.path.join(_ROOT, "README_START_HERE.txt")
 HIGGS_LICENSE_PATH = os.path.join(_ROOT, "LICENSE_HIGGS_TTS_3.txt")
 THIRD_PARTY_PATH = os.path.join(_ROOT, "THIRD_PARTY_LICENSES.md")
@@ -131,8 +134,10 @@ class TestDocumentation(unittest.TestCase):
     def test_readme_exists(self):
         self.assertTrue(os.path.isfile(README_PATH), "README.md must exist")
 
-    def test_readme_has_hungarian_section(self):
-        text = _read(README_PATH)
+    def test_readme_hu_exists_and_has_hungarian_section(self):
+        self.assertTrue(os.path.isfile(README_HU_PATH),
+                        "README_HU.md must exist (Hungarian user guide)")
+        text = _read(README_HU_PATH)
         self.assertIn("# HU | Magyar", text)
         self.assertIn('<a id="magyar"></a>', text)
 
@@ -141,12 +146,21 @@ class TestDocumentation(unittest.TestCase):
         self.assertIn("# EN | British English", text)
         self.assertIn('<a id="english"></a>', text)
 
+    def test_readme_cross_links_language_files_and_repository(self):
+        """P3.44.5 docs round: the two language files cross-link each
+        other and both point at the canonical GitHub repository."""
+        en, hu = _read(README_PATH), _read(README_HU_PATH)
+        self.assertIn("](README_HU.md)", en,
+                      "README.md must link the Hungarian documentation")
+        self.assertIn("](README.md)", hu,
+                      "README_HU.md must link the English documentation")
+        for text in (en, hu):
+            self.assertIn("https://github.com/AGE-T/GUINEO", text,
+                          "both files reference the GitHub repository")
+
     def test_both_language_sections_describe_same_functionality(self):
         """The two versions describe the SAME current application."""
-        text = _read(README_PATH)
-        hu_start = text.index("# HU | Magyar")
-        en_start = text.index("# EN | British English")
-        hu, en = text[hu_start:en_start], text[en_start:]
+        hu, en = _read(README_HU_PATH), _read(README_PATH)
         # Core concepts that must appear in BOTH language sections.
         for concept in (
             "Combine Scene", "Batch Queue", "STALE", "REVIEW REQUIRED",
@@ -161,37 +175,37 @@ class TestDocumentation(unittest.TestCase):
         self.assertIn("24,000 Hz", en)
 
     def test_guineo_is_the_visible_product_identity(self):
-        text = _read(README_PATH)
-        self.assertGreaterEqual(text.count("GUINEO"), 30,
+        combined = _read(README_PATH) + _read(README_HU_PATH)
+        self.assertGreaterEqual(combined.count("GUINEO"), 30,
                                 "GUINEO must dominate the README branding")
 
     def test_no_stale_user_facing_speechstudio_branding_in_readme(self):
         """SpeechStudio may appear ONLY as file names or the historical
         'formerly known as' note — never as the current product name."""
-        text = _read(README_PATH)
-        stripped = text
-        for allowed in (
-            "SpeechStudio_clean.zip",          # update process contract
-            "SpeechStudio.py",                 # entry-point file name
-            "development name SpeechStudio",   # EN historical note
-            "development name *SpeechStudio*", # EN historical note (emphasis)
-            "fejlesztői nevén SpeechStudio",   # HU historical note
-            "fejlesztői nevén *SpeechStudio*", # HU historical note (emphasis)
-        ):
-            stripped = stripped.replace(allowed, "")
-        self.assertNotIn("SpeechStudio", stripped,
-                         "stale user-facing SpeechStudio branding in README")
+        for path in (README_PATH, README_HU_PATH):
+            text = _read(path)
+            stripped = text
+            for allowed in (
+                "SpeechStudio_clean.zip",          # update process contract
+                "SpeechStudio.py",                 # entry-point file name
+                "development name SpeechStudio",   # EN historical note
+                "development name *SpeechStudio*", # EN historical note (emphasis)
+                "fejlesztői nevén SpeechStudio",   # HU historical note
+                "fejlesztői nevén *SpeechStudio*", # HU historical note (emphasis)
+            ):
+                stripped = stripped.replace(allowed, "")
+            self.assertNotIn("SpeechStudio", stripped,
+                             "stale user-facing SpeechStudio branding in %s"
+                             % os.path.basename(path))
 
     def test_readme_links_to_higgs_license(self):
-        text = _read(README_PATH)
-        self.assertIn("[`LICENSE_HIGGS_TTS_3.txt`](LICENSE_HIGGS_TTS_3.txt)", text)
-        self.assertIn("[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)", text)
+        for path in (README_PATH, README_HU_PATH):
+            text = _read(path)
+            self.assertIn("[`LICENSE_HIGGS_TTS_3.txt`](LICENSE_HIGGS_TTS_3.txt)", text)
+            self.assertIn("[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)", text)
 
     def test_support_section_at_end_of_hungarian_section(self):
-        text = _read(README_PATH)
-        hu_start = text.index("# HU | Magyar")
-        en_start = text.index("# EN | British English")
-        hu = text[hu_start:en_start]
+        hu = _read(README_HU_PATH)
         support_pos = hu.rindex("## ☕ Támogatás / Support")
         # No heading of any level may follow the support heading within
         # the HU section ("keep it at the end").
@@ -214,15 +228,16 @@ class TestDocumentation(unittest.TestCase):
 
     def test_kofi_links_preserved(self):
         """All supplied Ko-fi links are preserved verbatim, in BOTH
-        language sections."""
-        text = _read(README_PATH)
+        language files."""
         for url in (KOFI_URL, KOFI_BADGE_URL, KOFI_BUTTON_URL):
-            self.assertGreaterEqual(text.count(url), 2,
-                                    "Ko-fi link must appear in both sections: %s" % url)
+            for path in (README_PATH, README_HU_PATH):
+                self.assertIn(url, _read(path),
+                              "Ko-fi link missing from %s: %s"
+                              % (os.path.basename(path), url))
 
     def test_logo_reference_and_asset_valid(self):
-        text = _read(README_PATH)
-        self.assertIn('src="assets/brand/guineo_logo.png"', text)
+        for path in (README_PATH, README_HU_PATH):
+            self.assertIn('src="assets/brand/guineo_logo.png"', _read(path))
         self.assertTrue(os.path.isfile(LOGO_PATH))
         from PySide6.QtGui import QImage
         img = QImage(LOGO_PATH)
@@ -231,22 +246,29 @@ class TestDocumentation(unittest.TestCase):
         self.assertEqual(img.height(), 140)
 
     def test_no_broken_internal_anchor_links(self):
-        text = _read(README_PATH)
-        explicit = set(re.findall(r'<a id="([^"]+)"></a>', text))
-        heading_slugs = set()
-        for m in re.finditer(r"^#{1,6}\s+(.+?)\s*$", text, re.MULTILINE):
-            heading_slugs.add(_github_slug(m.group(1)))
-        links = set(re.findall(r"\]\(#([^)]+)\)", text))
-        self.assertTrue(links)
-        broken = sorted(l for l in links
-                        if l not in explicit and l not in heading_slugs)
-        self.assertEqual(broken, [], "broken internal anchor links")
+        for path in (README_PATH, README_HU_PATH):
+            text = _read(path)
+            explicit = set(re.findall(r'<a id="([^"]+)"></a>', text))
+            heading_slugs = set()
+            for m in re.finditer(r"^#{1,6}\s+(.+?)\s*$", text, re.MULTILINE):
+                heading_slugs.add(_github_slug(m.group(1)))
+            links = set(re.findall(r"\]\(#([^)]+)\)", text))
+            self.assertTrue(links)
+            broken = sorted(l for l in links
+                            if l not in explicit and l not in heading_slugs)
+            self.assertEqual(broken, [],
+                             "broken internal anchor links in %s"
+                             % os.path.basename(path))
 
     def test_no_broken_relative_file_links(self):
-        text = _read(README_PATH)
-        rel = set(re.findall(r"\]\((?!#|https?://|mailto:)([^)]+)\)", text))
-        broken = sorted(r for r in rel if not os.path.isfile(os.path.join(_ROOT, r)))
-        self.assertEqual(broken, [], "broken relative file links")
+        for path in (README_PATH, README_HU_PATH):
+            text = _read(path)
+            rel = set(re.findall(r"\]\((?!#|https?://|mailto:)([^)]+)\)", text))
+            broken = sorted(r for r in rel
+                            if not os.path.isfile(os.path.join(_ROOT, r)))
+            self.assertEqual(broken, [],
+                             "broken relative file links in %s"
+                             % os.path.basename(path))
 
     def test_higgs_license_file_is_verbatim_official(self):
         self.assertTrue(os.path.isfile(HIGGS_LICENSE_PATH))
@@ -286,6 +308,7 @@ class TestDocumentation(unittest.TestCase):
         text = _read(START_HERE_PATH)
         self.assertIn("GUINEO - Quick Start Guide", text)
         self.assertIn("README.md", text)  # points at the full guide
+        self.assertIn("README_HU.md", text)  # and at the Hungarian guide
         # Current facts (the old file claimed 4 themes / Dark default /
         # "Concatenate" / auto-concatenation advice).
         self.assertIn("Themes (5)", text)
@@ -304,8 +327,7 @@ class TestDocumentation(unittest.TestCase):
         self.assertIn(KOFI_URL, text)
 
     def test_british_english_spelling_in_en_section(self):
-        text = _read(README_PATH)
-        en = text[text.index("# EN | British English"):]
+        en = _read(README_PATH)  # the file is English-only since P3.44.5
         for british in ("licence", "normalisation", "organises",
                         "recognised"):
             self.assertIn(british, en,
@@ -325,10 +347,8 @@ class TestDocumentation(unittest.TestCase):
 
     def test_readme_documents_required_topics(self):
         """§29 coverage spot-check: every mandated topic is present in
-        both language sections."""
-        text = _read(README_PATH)
-        hu = text[text.index("# HU | Magyar"):text.index("# EN | British English")]
-        en = text[text.index("# EN | British English"):]
+        both language files."""
+        hu, en = _read(README_HU_PATH), _read(README_PATH)
         topics_hu = ("Plain Text", "Narration Blocks", "Preview", "FRIENDLY",
                      "ADVANCED", "STALE", "REVIEW REQUIRED", "Project Assembly",
                      "Batch Audio Export", "Hangprofilok", "Szereplők",
@@ -342,9 +362,25 @@ class TestDocumentation(unittest.TestCase):
                      "Hardware requirements", "Troubleshooting", "Keyboard shortcuts",
                      "Menus", "Licensing", "102 languages")
         for t in topics_hu:
-            self.assertIn(t, hu, "HU section missing topic: %r" % t)
+            self.assertIn(t, hu, "HU file missing topic: %r" % t)
         for t in topics_en:
-            self.assertIn(t, en, "EN section missing topic: %r" % t)
+            self.assertIn(t, en, "EN file missing topic: %r" % t)
+
+    def test_current_phase_documented_in_both_files(self):
+        """P3.44.5 docs round: both files document the current phase,
+        its stabilisation scope and the release history."""
+        en, hu = _read(README_PATH), _read(README_HU_PATH)
+        self.assertIn("What's new in P3.44.5", en)
+        self.assertIn("Újdonságok a P3.44.5-ben", hu)
+        for text in (en, hu):
+            self.assertIn("tests/test_p3_44_5_stabilisation_integrity.py", text)
+            self.assertIn("P3.44.5", text)
+        # The release-history sections exist in both files.
+        self.assertIn("## Release history", en)
+        self.assertIn("## Kiadástörténet", hu)
+        # The developer/repository sections exist in both files.
+        self.assertIn("## For developers", en)
+        self.assertIn("## Fejlesztőknek", hu)
 
 
 # ---------------------------------------------------------------------------

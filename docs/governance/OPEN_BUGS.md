@@ -2179,3 +2179,68 @@ source, existing Typography system only.
   683+81+138+114+242+34); launch smoke 11/11 (real entry path);
   focused batteries: new batch file 12/12, new audit file 9/9,
   P3.44.1 22/22, P3.44.2/3/playback 133/133, P3.28 81/81.
+
+---
+
+## P3.44.5 RESEARCH-AUDIT REGISTER (2026-09)
+
+Source: `docs/audits/P3_44_5_RESEARCH_AUDIT.md` (read-only diagnostic
+round; every finding was runtime-reproduced before this register was
+written).
+
+**CLOSED in P3.44.5:**
+
+- **RA-B+D — Batch dialog stale listener after close→reopen.** CLOSED
+  (fixed + regression-locked: 8 lifecycle tests in
+  `tests/test_p3_44_5_stabilisation_integrity.py` fail on the pre-fix
+  code). Root cause: `closeEvent` released the manager listener; the
+  scene-aware reuse path re-showed the still-alive dialog without
+  re-registration, leaving it deaf to batch events (frozen pills, stuck
+  Start/Pause/Stop button states). Fix: `showEvent` funnels every
+  presentation through the idempotent `_connect_manager` plus a full
+  state re-sync. BatchManager semantics unchanged.
+- **RA-§11/§15 — Provenance identity mixing (positional join).** CLOSED
+  (fixed + regression-locked: 9 provenance tests fail on the pre-fix
+  code). Root cause: `slot_of_asset` matched assets to expected slots by
+  global `part_index` only, so old audio could cover a structurally
+  different plan and Combine could assemble stale audio. Fix:
+  block-aware join (`block_id` agreement for block-derived slots; kind
+  agreement for plain slots; mismatches return `None`; no silent legacy
+  downgrade). Legacy block-less scope unchanged.
+
+**OPEN (deferred by P3.44.5 scope discipline — not yet scheduled):**
+
+- **RA-C — Sentence splitter abbreviation/decimal fragmentation**
+  (P3.44.2 regression): "GLM 5.2", "U.S.A.", "v1.2", "3.14", "test.hu"
+  all fragment in both splitter implementations;
+  `_group_sentences` `" ".join` additionally mutates the text (injects
+  spaces into the model input).
+- **RA-A2 — `on_text_changed` offset corruption on block-start
+  deletions** (the real root of the reported "block delete" symptom):
+  the boundary bug shifts block ranges (overlap, wrong text ownership,
+  duplicate/fragment parts generated downstream).
+- **RA-A3 — clamped empty orphan blocks** (`[53:53]`-style invisible
+  blocks) survive save/reload.
+- **RA-A4 — positional auto-labelling illusion** (renumbered "Block N"
+  labels after deletions create the impression an identifier survived).
+- **RA-E — Re-detect semantics**: character-only assignment takes the
+  direct rebuild branch and silently destroys Characters;
+  `preserve_overrides` loses characters on plain edits without the
+  lost-warning; SFX/pause insertions are lost on every path; all block
+  ids are replaced on every Re-detect.
+- **RA-PLAN — GenerationPlan / structure-fingerprint stale-gate**
+  (design gap): expected slots carry no source structure fingerprint,
+  so a same-block asset whose part decomposition changed can still match
+  positionally (documented residual in
+  `docs/design/P3_44_5_STABILISATION_NOTES.md` §5).
+- **RA-UX — Block ≠ Part UI invisibility; duration estimate inflation
+  (prompt characters counted, +102% measured); three divergent splitter
+  implementations (the `PromptBuilder` conflict detector detaches SFX
+  markers from their sentence).**
+
+Each OPEN item is evidence-backed in the audit report; none is
+scheduled yet. Of the report's recommended fix order, the first two
+items (join discipline, dialog re-wiring) were delivered by P3.44.5;
+the remaining order is: fingerprint/plan gate → splitter rules →
+offset boundary fixes → Re-detect semantics → estimate/duplication
+cleanup.
