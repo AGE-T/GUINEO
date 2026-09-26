@@ -175,47 +175,72 @@ def slot_of_asset(asset: Dict[str, Any],
                   scene: Optional[Any] = None) -> Optional[str]:
     """The slot_id an AudioAsset belongs to, or None (legacy scope).
 
-    Join rule (P3.44.5 §8 — block-aware): when the Scene has an
-    expected slot structure, the asset's ``part_index`` selects the
-    CANDIDATE slot, and then part identity must AGREE:
+    Join rule (P3.44.6 — identity-first):
 
-    * a block-derived slot (``slot.block_id`` set) qualifies ONLY an
-      asset carrying the SAME ``block_id`` — ``part_index`` alone is
-      NOT sufficient. A positional line-up across structurally
-      different generation plans (blocks edited / re-split / rebuilt
-      so the block identities differ) previously let OLD audio be
-      matched to NEW slots: derived coverage reported the new
-      structure as covered and Combine could assemble old audio under
-      the new structure (the audited data-integrity reproduction);
-    * a plain slot (``block_id`` None — plain / speaker-split part)
-      qualifies only a plain asset (``block_id`` None): positional
-      identity is the whole part identity in the plain model, and a
-      block-aware asset on the other side is evidence of a different
-      structure;
-    * a mismatch on either side returns None — a modern block-aware
-      asset never silently downgrades to a weaker positional
-      comparison when the stronger one failed.
+    MODERN asset (carries ``slot_id`` — stamped at generation time by
+    the ONE writer, ``register_generation_result``):
 
-    A candidate position that no longer exists (the structure shrank)
-    also yields None for slotted scenes: the asset is from a different
-    structure and must not be re-anchored by the legacy synthesis.
+    * the recorded ``slot_id`` IS the authoritative structural identity.
+      When the Scene has an expected slot structure, the asset belongs
+      to the expected slot with EXACTLY that slot_id, wherever it now
+      sits in the structure — membership is position-independent, so a
+      reorder or growth of the structure never breaks a genuinely valid
+      membership (the proven positional false-negative class);
+    * if no expected slot carries that id, the part no longer exists in
+      the current structure → None. A modern asset NEVER falls back to
+      positional matching after an identity mismatch — that fallback is
+      exactly the defect class that let OLD audio be matched to a
+      differently-bounded NEW part (same block, same position, different
+      part_of_block: the audited false-positive) while shifted
+      positions hid genuinely valid audio.
 
-    LEGACY scope (scene without an expected slot structure, or
-    ``scene=None`` — pre-P3.28 scenes, external tools): a block asset
-    maps to ``{block_id}:{part_index}`` and a plain asset to
-    ``plain:{part_index}`` — degraded but unambiguous; such scenes use
-    legacy coverage anyway. This is the documented compatibility path
-    for block-less historical records: it is preserved verbatim.
+    LEGACY asset (no ``slot_id`` — every asset recorded before P3.44.6):
+
+    * with a slot structure present: the documented P3.44.5 positional +
+      block-aware join, preserved VERBATIM — the asset's ``part_index``
+      selects the CANDIDATE slot, and then part identity must AGREE:
+
+      - a block-derived slot (``slot.block_id`` set) qualifies ONLY an
+        asset carrying the SAME ``block_id`` — ``part_index`` alone is
+        NOT sufficient;
+      - a plain slot qualifies only a plain asset (``block_id`` None);
+      - a mismatch on either side, or a candidate position that no
+        longer exists (the structure shrank), yields None — the asset is
+        from a different structure and must not be re-anchored;
+
+    * LEGACY scope (scene without an expected slot structure, or
+      ``scene=None`` — pre-P3.28 scenes, external tools): a block asset
+      maps to ``{block_id}:{part_index}`` and a plain asset to
+      ``plain:{part_index}`` — degraded but unambiguous; such scenes use
+      legacy coverage anyway. A MODERN asset in this scope returns its
+      recorded ``slot_id`` verbatim (the identity is self-describing — no
+      positional synthesis of an identity the asset already carries).
+      This is the documented compatibility path for block-less
+      historical records: it is preserved.
     """
     if not isinstance(asset, dict):
         return None
     part_index = asset.get("part_index")
     block_id = asset.get("block_id")
-    if part_index is None and not block_id:
-        return None  # full-scene asset (single Generate) — not a slot
+    asset_slot_id = asset.get("slot_id")
     if scene is not None:
         slots_by_index = _slot_by_part_index(scene)
         if slots_by_index:
+            if asset_slot_id:
+                # MODERN (P3.44.6) identity-first join: the recorded
+                # slot_id is the authoritative membership. It must match
+                # an expected slot's slot_id EXACTLY, wherever that slot
+                # now sits (position-independent). No such slot → the
+                # part no longer exists in the current structure. NEVER
+                # downgrade a modern identity mismatch to positional
+                # matching.
+                for slot in slots_by_index.values():
+                    if slot.get("slot_id") == asset_slot_id:
+                        return slot.get("slot_id")
+                return None
+            if part_index is None and not block_id:
+                return None  # full-scene asset (single Generate) — not a slot
+            # LEGACY positional + block-aware join (P3.44.5 §8) — verbatim.
             try:
                 slot = slots_by_index.get(int(part_index))
             except (TypeError, ValueError):
@@ -235,6 +260,12 @@ def slot_of_asset(asset: Dict[str, Any],
             if block_id is None:
                 return slot.get("slot_id")
             return None
+    if asset_slot_id:
+        # Modern identity is self-describing — return it verbatim
+        # instead of synthesising one from positional coordinates.
+        return asset_slot_id
+    if part_index is None and not block_id:
+        return None  # full-scene asset (single Generate) — not a slot
     if block_id:
         try:
             return block_slot_id(block_id, int(part_index or 1))
@@ -724,20 +755,24 @@ def is_complete_scene_asset(asset: Any) -> bool:
     """True only when the asset is PROVABLY a full-Scene output, never a Part.
 
     Proof: the asset carries NO slot provenance (no block_id, no
-    part_index, no part_version — i.e. it was produced by a full-scene
-    Single Generate or a pre-P3.28 generation) AND its filename does
-    not carry a legacy part marker ("_Part_NN" / "_Long_vNN").
+    part_index, no part_version, no slot_id — i.e. it was produced by a
+    full-scene Single Generate or a pre-P3.28 generation) AND its
+    filename does not carry a legacy part marker ("_Part_NN" /
+    "_Long_vNN").
 
     A Part AudioAsset NEVER passes this proof — no exceptions, not even
     for a Scene with a single slot. Automatic resolution must never
     present one Part as the whole Scene's audio (accepted follow-up
-    safety rule).
+    safety rule). P3.44.6: ``slot_id`` (the authoritative modern slot
+    identity) is part of the same negative proof — an asset that carries
+    a slot identity is definitionally a Part.
     """
     if not isinstance(asset, dict):
         return False
     if (asset.get("block_id")
             or asset.get("part_index") is not None
-            or asset.get("part_version") is not None):
+            or asset.get("part_version") is not None
+            or asset.get("slot_id")):
         return False  # explicit slot provenance — it is a Part
     name = os.path.basename(str(asset.get("output_path") or ""))
     if _LEGACY_PART_NAME_RE.search(name):
@@ -932,7 +967,8 @@ def register_generation_result(project: Any, result: Any,
       happens to be active) — closes defect D-3. Falls back to
       ``scene_fallback`` only for legacy results without a scene_id.
     - Appends the asset dict (with block_id / part_index / part_version /
-      generation_run provenance) to that Scene's append-only stream.
+      generation_run provenance, and — P3.44.6 — the authoritative
+      slot_id structural identity) to that Scene's append-only stream.
     - Recomputes that Scene's derived coverage state (D-2: the Scene
       never flips to COMPLETE merely because a part finished — with a run
       in flight the caller passes generating=True).
@@ -966,6 +1002,11 @@ def register_generation_result(project: Any, result: Any,
         "part_index": getattr(result, "part_index", None),
         "part_version": getattr(result, "part_version", None),
         "generation_run": getattr(result, "generation_run", None),
+        # P3.44.6: the authoritative modern structural slot identity
+        # (None for legacy results / manual / full-scene generations).
+        # Stamped HERE, at the single write point, from the request →
+        # result passthrough — the asset never re-derives membership.
+        "slot_id": getattr(result, "slot_id", None),
     }
     assets = getattr(scene, "audio_assets", None)
     if assets is None:

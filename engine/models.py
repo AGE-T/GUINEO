@@ -264,6 +264,18 @@ class GenerationRequest:
     # generated file answers "which block / which run created me?".
     block_id: Optional[str] = None
     generation_run: Optional[str] = None
+    # P3.44.6: THE authoritative modern structural identity — the slot id
+    # this generation belongs to ("{block_id}:{part_of_block}" or
+    # "plain:{part_index}"), copied from the expected slot / BatchJob so
+    # the asset side never has to RE-DERIVE slot membership from the
+    # unstable global part_index (queue position). Forwarded by
+    # BatchJob.to_request(); stamped onto the AudioAsset by the ONE writer
+    # (register_generation_result). part_index remains global positional
+    # METADATA (filenames, Batch display, legacy joins) — never the primary
+    # modern join key. Generation SETTINGS (temperature/top_k/top_p/seed/
+    # prompt) do NOT change this identity: same slot + new settings = a new
+    # generation_run / part_version of the SAME slot.
+    slot_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +321,11 @@ class GenerationResult:
     # writer (engine/audio_provenance.register_generation_result).
     block_id: Optional[str] = None
     generation_run: Optional[str] = None
+    # P3.44.6: the authoritative modern structural slot identity, set by
+    # Engine from the request (same source field). Consumed by the ONE
+    # registration writer to stamp the AudioAsset — see
+    # GenerationRequest.slot_id.
+    slot_id: Optional[str] = None
     # P3.30(d): True when the pipeline was stopped by a cooperative
     # cancel at a safe checkpoint (before the model call). A cancelled
     # result never has output audio; the BatchManager renders it as a
@@ -718,6 +735,15 @@ class AudioAsset:
     part_index: Optional[int] = None
     part_version: Optional[int] = None
     generation_run: Optional[str] = None
+    # P3.44.6: the authoritative modern structural identity — the slot id
+    # this asset was generated FOR ("{block_id}:{part_of_block}" /
+    # "plain:{part_index}"), stamped at generation time by the ONE writer.
+    # None = legacy asset (pre-P3.44.6): membership falls back to the
+    # documented P3.44.5 positional + block-aware join. A modern asset's
+    # membership is decided by THIS field alone (identity-first join in
+    # audio_provenance.slot_of_asset) — a modern mismatch NEVER downgrades
+    # to positional matching.
+    slot_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -733,4 +759,5 @@ class AudioAsset:
             "part_index": self.part_index,
             "part_version": self.part_version,
             "generation_run": self.generation_run,
+            "slot_id": self.slot_id,
         }

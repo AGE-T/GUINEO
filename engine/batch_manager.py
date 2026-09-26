@@ -240,6 +240,12 @@ class BatchJob:
         P3.28: also forwards block_id/generation_run (provenance
         passthrough — design record Rec 23) so the single registration
         writer can tag the AudioAsset with its block and run.
+
+        P3.44.6: also forwards slot_id — THE authoritative modern
+        structural identity. Previously the request dropped it, so the
+        asset side had to re-derive slot membership from the unstable
+        global part_index (positional join). The queue YAML already
+        persisted slot_id; this closes the runtime half of the chain.
         """
         return GenerationRequest(
             text=self.prompt,
@@ -256,6 +262,7 @@ class BatchJob:
             expected_duration=self.expected_duration,
             block_id=self.source_block_id,
             generation_run=self.generation_run,
+            slot_id=self.slot_id,
         )
 
 
@@ -427,6 +434,30 @@ class BatchManager:
                 self._jobs.insert(dst, job)
 
     def duplicate_job(self, index: int) -> Optional[int]:
+        """Duplicate a job into an INDEPENDENT manual queue row.
+
+        P3.44.6 (explicit semantics, validated by regression tests):
+        duplication means "create a new manual Batch job with the same
+        prompt/settings/context" — NOT "another generation of the same
+        structural slot". The clone therefore deliberately strips ALL
+        structural provenance (part_index/part_version/expected_duration/
+        source_block_id/generation_run/slot_id), exactly as before:
+
+        * its request carries no slot_id → its registered asset carries
+          none either → the asset joins NO expected slot (coverage,
+          versioning and Scene Combine are untouched by a duplicated
+          row's generation — it can never masquerade as the original
+          slot);
+        * regen keeps the manual overwrite-in-place contract
+          (_on_batch_regen versions only jobs that carry part_index);
+
+        while preserving the scene/speaker/character context so the
+        duplicate keeps the same History lineage as the original
+        (P3.23 design record §22). Copying slot_id blindly here would
+        make the duplicate's asset silently join the original slot while
+        sharing its output filename — a version-lineage collision; the
+        stripping is the correct half of the manual/structural split.
+        """
         with self._lock:
             if 0 <= index < len(self._jobs):
                 src = self._jobs[index]
@@ -445,6 +476,9 @@ class BatchManager:
                     scene_id=src.scene_id,
                     scene_name=src.scene_name,
                     character_id=src.character_id,
+                    # P3.44.6: structural provenance (part/slot/run) is
+                    # deliberately NOT copied — see docstring. The clone is
+                    # a manual job, not a slot member.
                 )
                 self._jobs.insert(index + 1, clone)
                 return index + 1

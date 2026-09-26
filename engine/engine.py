@@ -344,6 +344,13 @@ class Engine:
                 result.block_id = request.block_id
             if getattr(request, 'generation_run', None) is not None:
                 result.generation_run = request.generation_run
+            # P3.44.6: pass the authoritative modern structural slot
+            # identity through to the result (same consumer as above —
+            # register_generation_result stamps it onto the AudioAsset
+            # so slot membership never has to be re-derived from the
+            # global part_index).
+            if getattr(request, 'slot_id', None) is not None:
+                result.slot_id = request.slot_id
 
             # --- Step 5: Store history ---
             if result.success:
