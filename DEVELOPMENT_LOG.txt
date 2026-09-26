@@ -3394,3 +3394,101 @@ becslés). A kézi split/merge SFX/pause-újraosztási lelet változatlanul
 halasztva (felhasználói művelet, független a szabdalótól — vizsgálva,
 nem azonos a hibával). A Batch Generation Architecture V2 továbbra is
 halasztva.
+
+================================================================================
+P3.44.9 — BLOKK-OFFSZET / TÖRLÉS-INTEGRITÁS
+(IMPLEMENTATION + REGRESSION FAZIS)
+================================================================================
+
+CÉL: a bizonyított blokkstruktúra-corruption megszüntetése. A gyökérokoz
+NEM a Delete gomb volt, hanem az on_text_changed határosztályozása: a
+"change_start <= block.start" ág a blokk ELŐTTI módosításra jó, de a
+határon KEZDŐDŐ törlésnél a blokkot BALRA tolja (a bizonyított
+[53:99] -> [7:53]: átfedés, idegen szöveg-tulajdonlás, duplikált
+generálás, árva-blokk perzisztencia). Testvérhiba ugyanabban a
+motorban: az on_multi_replace csak az end_offset-et igazította, egy
+blokk kezdetét fedő találatnál a start feltérképezetlen maradt, a
+pontosan fedő találat [53:53] fantomot hagyott. A clamp (end =
+max(start, end)) túlélő karaktereket dobott el és látszólag érvényes,
+de hibás tartományt gyártott.
+
+VÉGREHAJTÁS (2 produkciós fájl):
+- engine/narration_block_manager.py — ÚJ _apply_edit_to_blocks: az EGY
+  tekintélyes transzformációs szabály (1: e<=cs érintetlen; 2: ce<=s
+  shift; 3: s<=cs<e fej érintetlen, a blokk birtokolja a
+  csereszöveget; 4: cs<s<ce fej cserélve — semmi nem él túl =>
+  TÖRLÉS, vagy csak a farok él [cs+L, cs+L+(e-ce)); 5: teljes
+  szövegcsere => minden blokk törlődik; 6: nulla karakterű blokk
+  nem létezhet — örökölt fantomok is gyógyulnak az első
+  szerkesztésnél). Az on_text_changed és az on_multi_replace (sorban,
+  futó shift-tel) UGYANAZT a szabályt hívja — nincs esetszétválás.
+  _remap_insertions: az SFX/pause-beszúrásek blokk-relatív offszetje
+  ugyanazon abszolút leképezésen utazik (szerkesztés előtt változatlan,
+  utána +delta, a cserélt régión belül determinisztikus clamp a csere
+  kezdetére — felhasználói SFX sosem tűnik el egy leütésnél).
+- ui/panels/narration_editor.py — set_text (programmatikus
+  dokumentumcsere, history-reuse út): a blokkmodell RESET-je + Blocks
+  módban friss auto-detect (a P3.26 scene-load guard érintetlen — a
+  restore set_scene_blocks-sal cseréli a modellt).
+
+BLOKKMODELL-INVARIÁNSOK (dokumentálva, végleges): 0<=start<end<=len,
+növekvő startok, átfedés-mentesség, pontos nyers szöveg-tulajdonlás
+(text[start:end]), nincs fantom-sor, hézagok legálisak és
+gazdátlanok, a teljes lefedés NEM követelmény, a nulla karakterű
+tartomány nem blokk. A B{N} címke pozicionális (nem identitás); az id
+stabil a szerkesztéseken át, a törölt blokk id-je eltűnik.
+
+KÉZI SPLIT/MERGE (§15 — vizsgálat, következtetés: külön hiba): a split_block/
+merge_with_above TARTOMÁNYAI helyesek ([s,split)+[split,e);
+above.end=block.end — karakterizációs kontrollok a RÉGI és ÚJ fán is
+zöldek) — csak a span-lokális beszúrás-újraosztást nem valósítják meg.
+Külön, halasztott tétel marad (P3.44.7-lelet); NEM az offszet-motor
+hibája, nem absorbeálva.
+
+TESZTEK (új): tests/test_p3_44_9_block_offset_delete_integrity.py —
+76 teszt + 35 alteszt: a bizonyított [53:99]->[7:53] reprodukció (5),
+törlési mátrix A-I + dokumentum-törlés (10), beszúrási mátrix (9),
+többműveletes szekvenciák (4), szerkezeti invariánsok + determinisztikus
+pozíció-sweep (törlési táblázat 12 eset, beszúrási táblázat 8 eset,
+teljes forgatókönyv-batari, örökölt-fantom gyógyulás), identitás (4),
+clamp-integritás (3), határfeltételek (cs==s / ce==e / mindkettő /
+azonos hosszú csere — 6), Replace-All mátrix (5), metaadat+marker-
+propagáció (8), mentés/betöltés körút (3), generálási következmény
+rehidratációval (5), kézi split/merge karakterizáció (4), valódi
+editoros Qt-jel útvonalak (5), rendezési modell (1).
+
+RÉGI-ÚJ BIZONYÍTÁS (végleges tesztfájl, produkciós változások
+git-stash-olva): RÉGI kód 54 failed / 33 passed (az 54 = hibadetektor,
+a 33 = kontroll), ÚJ kód 76/76. Fókusz: P3.44.5/6/7/8 + új suite
+251/251; blokk/editor/mentési csomagok (P3.15x2, P3.26, P3.41,
+P3.44.2, audit) 237/237. Teljes báteriában 1575 passed; KÉT elő-
+létező, fázisfüggetlen hiba bizonyítva a pristine fán is: a P3.37
+README-dokumentációs teszt (a cd5e122 "Update README.md" commit óta
+törött) és a timing-érzékeny test_regen_run_stop_leaves_others_pending
+(a pristine fán is 3/4 futásban elbukik — a teszt maga dokumentálja a
+still-busy-engine retry-láncot). verify_compile 146/146,
+verify_architecture PASS, verify_functional_integrity 80/80, launch
+smoke 11/11.
+
+DOKUMENTÁCIÓ: docs/design/P3_44_9_BLOCK_OFFSET_DELETE_INTEGRITY.md
+(12 szakasz: gyökérok, határfeltétel, transzformációs szabály táblázat,
+invariánsok, Delete-gomb, beszúrás/szerkesztés, mentés/betöltés,
+generálási bizonyíték, split/merge-vizsgálat, tesztek, régi/új
+bizonyíték, maradványok). OPEN_BUGS.md: RA-A2/RA-A3/RA-A4 CLOSED;
+új P3.44.9-szakasz (SS-2) a maradványokkal; a fix-sorrend bekezdés
+frissítve (P3.44.9 kész, P3.45 következik).
+
+MARADVÁNYOK (bizonyíték-alapú): diff-alapú motor — ismétlődő szövegnél
+a (prefix,suffix) metszet érvényes, de a kurzortörténettől eltérhet (a
+tulajdonlás a választott metszetre mindig pontos); szöveg-UNDO nem
+támasztja fel a szabály által törölt blokkokat (Qt-undo csak szöveg);
+örökölt fantomok az első szerkesztésig körutaznak (új fantom nem
+keletkezhet); kézi split/merge SFX/pause-újraosztás halasztva; az
+elő-létező P3.37 README-teszt és a flaky regen-teszt rögzítve.
+
+NEM TÖRTÉNT: Re-detect szemantika (P3.44.7 érintetlen — 44/44),
+mondat-szabdaló (P3.44.8 érintetlen — 62/62), slot_id-identitás
+(P3.44.6 érintetlen — 40/40), Batch-életciklus/provenancia (P3.44.5
+érintetlen — 29/29), GenerationPlan/STALE/fingerprint, Block→Part UX,
+oversized-block preflight, duráció-becslés, renderelés. A P3.44.9
+itt leáll — nincs automatikus belépés a P3.45-be.

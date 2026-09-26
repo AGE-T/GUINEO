@@ -2232,10 +2232,30 @@ written).
   deletions** (the real root of the reported "block delete" symptom):
   the boundary bug shifts block ranges (overlap, wrong text ownership,
   duplicate/fragment parts generated downstream).
+  **P3.44.9 RESOLUTION: CLOSED.** `on_text_changed` and
+  `on_multi_replace` now transform every edit through the ONE
+  authoritative rule `_apply_edit_to_blocks` (edit at/after end →
+  untouched; edit before → shift; edit starting inside/at the block →
+  head intact, owns the replacement; block starting inside the
+  replaced region → surviving tail only or REMOVED; whole-text swap →
+  all removed; zero-character range → not a block). Old-code proof:
+  54 defect detectors red / 33 controls green → 76/76 green (see
+  `docs/design/P3_44_9_BLOCK_OFFSET_DELETE_INTEGRITY.md`).
 - **RA-A3 — clamped empty orphan blocks** (`[53:53]`-style invisible
   blocks) survive save/reload.
+  **P3.44.9 RESOLUTION: CLOSED.** Zero-character blocks cannot exist
+  after any text change (removed with their rows and insertions);
+  legacy phantoms are healed on the first edit; save/load round-trips
+  are fidelity-exact and phantom-free for structures produced by the
+  fixed engine.
 - **RA-A4 — positional auto-labelling illusion** (renumbered "Block N"
   labels after deletions create the impression an identifier survived).
+  **P3.44.9 RESOLUTION: CLOSED (documented, not a defect).** The B{N}
+  gutter label is POSITIONAL by design; block ids (uuids) are the
+  stable identity and remain stable through ordinary edits (locked by
+  regression). The illusion is resolved by the documentation + the
+  structural guarantee that a deleted block leaves NO row at all —
+  there is nothing left to mislabel.
 - **RA-E — Re-detect semantics**: character-only assignment takes the
   direct rebuild branch and silently destroys Characters;
   `preserve_overrides` loses characters on plain edits without the
@@ -2294,9 +2314,9 @@ re-wiring) were delivered by P3.44.5; the join-discipline item was
 COMPLETED by P3.44.6 (identity-first slot_id join — the
 fingerprint/plan-gate step is resolved by it, see RA-PLAN above);
 Re-detect semantics was COMPLETED by P3.44.7 (see RA-E above);
-splitter rules was COMPLETED by P3.44.8 (see RA-C above); the
-remaining order is: offset boundary fixes (P3.44.9) →
-estimate/duplication cleanup (P3.45).
+splitter rules was COMPLETED by P3.44.8 (see RA-C above);
+offset boundary fixes were COMPLETED by P3.44.9 (see RA-A2/A3/A4
+above); the remaining order is: estimate/duplication cleanup (P3.45).
 
 ## P3.44.8 round — sentence splitter integrity
 
@@ -2324,3 +2344,54 @@ estimate/duplication cleanup (P3.45).
   design doc §10 (title abbreviations, uppercase continuation,
   sentence-initial lowercase, space-containing onomatopoeia in the
   compiled representation).
+
+## P3.44.9 round — block offset / delete integrity
+
+### SS-2: block-start deletion shifted ranges into preceding text
+
+- **Status**: **CLOSED** (P3.44.9; audit items RA-A2 + RA-A3)
+- **Severity**: Critical (structural corruption: overlap, wrong text
+  ownership, duplicated generation text, phantom blocks surviving
+  save/load)
+- **Root cause**: `NarrationBlockManager.on_text_changed` classified
+  blocks with `change_start <= block.start` → shift BOTH ends — correct
+  only for edits entirely before the block. A deletion starting exactly
+  at a block boundary shifted the block into preceding text
+  (`[53:99] → [7:53]`); blocks starting inside a replaced region were
+  shifted the same way; an edit extending past a block's end was
+  clamped, discarding surviving characters and leaving `[x:x)` phantom
+  rows. `on_multi_replace` (Replace All) had the sibling defect
+  (match covering a block start left the start unmapped; match exactly
+  covering a block left a phantom).
+- **Fix**: ONE authoritative rule `_apply_edit_to_blocks` shared by
+  `on_text_changed` and `on_multi_replace` (untouched / shift /
+  head-intact-owns-replacement / surviving-tail-only / removed /
+  whole-text-swap / zero-character-block-does-not-exist) + insertion
+  offsets ride the same mapping + `set_text` resets the block model
+  (programmatic swap contract). 76 permanent regression tests + 35
+  subtests; old-code proof 54 red / 33 controls → 76/76; full battery
+  1575 passed; launch smoke 11/11. Design record:
+  `docs/design/P3_44_9_BLOCK_OFFSET_DELETE_INTEGRITY.md`.
+
+### SS-3 (pre-existing, recorded): P3.37 README documentation test mismatch
+
+- **Status**: **OPEN** (not a P3.44.9 defect — evidence: identical
+  failure with the P3.44.9 changes stashed AND with `README.md` at its
+  last commit `cd5e122`)
+- **Severity**: Low (test-only): `test_p3_37_branding_documentation.py
+  ::test_readme_has_british_english_section` expects the header
+  `# EN | British English`, which no longer exists in the README
+  structure rewritten by commit `cd5e122` ("Update README.md").
+- **Disposition**: deferred — fixing the README header or the test is
+  documentation work outside the P3.44.9 offset scope.
+
+### SS-4 (pre-existing, recorded): flaky regen-stop timing test
+
+- **Status**: **OPEN** (flaky; not a P3.44.9 defect — evidence: fails
+  3 of 4 runs on the pristine tree, identical signature)
+- **Severity**: Low (test-only): `test_p3_44_4_batch_execution_run.py
+  ::test_regen_run_stop_leaves_others_pending` intermittently marks the
+  regen job FAILED under suite load; the test itself documents the
+  still-busy-engine retry chain.
+- **Disposition**: deferred — needs a deterministic engine-busy barrier
+  in the harness (test infrastructure, outside the phase scope).

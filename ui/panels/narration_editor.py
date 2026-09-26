@@ -2023,8 +2023,25 @@ class NarrationEditor(QWidget):
         return self._editor.toPlainText()
 
     def set_text(self, text: str) -> None:
+        """Replace the whole document text (programmatic full swap).
+
+        P3.44.9: a programmatic document swap RESETS the block model —
+        no block can claim ownership of text it was never detected on
+        (the history-reuse path previously fed the swap into the offset
+        engine, which clamped the old blocks into garbage/phantom
+        ranges). When Narration Blocks mode is active the new document
+        is auto-detected immediately (the same contract as entering
+        blocks mode with no blocks). Scene restores are unaffected:
+        they run inside the P3.26 ``begin_scene_load`` guard (skipped
+        here) and replace the whole model via ``set_scene_blocks``.
+        """
+        self._block_manager.clear()
         self._editor.setPlainText(text)
         self._block_manager.on_text_changed(text)
+        if self._mode == self.MODE_BLOCKS and not self._loading_scene:
+            self._block_manager.auto_detect(text)
+            self._post_analyze()
+            self._render_block_visuals()
 
     def insert_at_cursor(self, text: str) -> None:
         cursor = self._editor.textCursor()

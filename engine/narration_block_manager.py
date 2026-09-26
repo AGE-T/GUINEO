@@ -645,7 +645,124 @@ class NarrationBlockManager:
         block.manually_edited = True
         return True
 
+    # ------------------------------------------------------------------
+    # P3.44.9 — the single authoritative block-offset transformation
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _apply_edit_to_blocks(blocks, cs: int, ce: int, inserted_len: int):
+        """Apply ONE contiguous text edit to a list of blocks (P3.44.9).
+
+        The edit replaces old text ``[cs, ce)`` with ``inserted_len``
+        characters (``delta = inserted_len - (ce - cs)``). For every
+        block ``[s, e)`` (old coordinates):
+
+          1. ``e <= cs``   -> untouched (edit at/after the block end).
+          2. ``ce <= s``   -> ``[s+delta, e+delta]`` (edit before block).
+          3. ``s <= cs < e`` -> head intact, the block owns the
+             replacement (the edit was typed inside it):
+               ``e <= ce`` : ``[s, cs+inserted_len)``
+               ``e >  ce`` : ``[s, cs+inserted_len+(e-ce))``
+          4. ``cs < s < ce`` -> head replaced:
+               ``e <= ce`` : REMOVED (nothing survives, nothing owned)
+               ``e >  ce`` : ``[cs+inserted_len, cs+inserted_len+(e-ce))``
+
+        Blocks whose final range owns zero characters (including
+        pre-existing phantom ranges) are removed: a block that owns no
+        source characters is not a block. Span-local SFX/pause
+        insertion offsets ride the same absolute coordinate mapping.
+
+        Returns the surviving block list (same objects, updated ranges).
+        Purely deterministic — no context beyond (cs, ce, inserted_len).
+        """
+        delta = inserted_len - (ce - cs)
+        kept = []
+        for block in blocks:
+            s, e = block.start_offset, block.end_offset
+            if e <= cs:
+                # Edit at/after the block end: the block is untouched.
+                kept.append(block)
+                continue
+            if ce <= s:
+                # Edit entirely before the block: shift by delta.
+                block.start_offset = s + delta
+                block.end_offset = e + delta
+                kept.append(block)
+                continue
+            # Overlapping edit — the block's text content changed.
+            repl_end = cs + inserted_len
+            if s <= cs:
+                # Head intact; the block owns the replacement text.
+                new_s = s
+                new_e = repl_end if e <= ce else repl_end + (e - ce)
+            else:
+                # cs < s: the block starts inside the replaced region.
+                if e <= ce:
+                    logger.info(
+                        "Block '%s' [%d:%d] fully replaced by edit "
+                        "[%d:%d) — removed (no surviving text).",
+                        block.id, s, e, cs, ce)
+                    continue
+                new_s = repl_end
+                new_e = repl_end + (e - ce)
+            block.manually_edited = True
+            NarrationBlockManager._remap_insertions(
+                block, s, new_s, new_e, cs, ce, delta)
+            block.start_offset = new_s
+            block.end_offset = new_e
+            kept.append(block)
+        # A block that owns zero characters does not exist (P3.44.9:
+        # this also heals legacy phantom ranges on the first edit).
+        return [b for b in kept if b.start_offset < b.end_offset]
+
+    @staticmethod
+    def _remap_insertions(block: PromptBlock, old_start: int,
+                          new_start: int, new_end: int,
+                          cs: int, ce: int, delta: int) -> None:
+        """Propagate block-relative SFX/pause offsets through one edit.
+
+        The insertion offset rides the SAME absolute coordinate mapping
+        as the block ranges: positions before the edit stay, positions
+        at/after the edit end shift by delta, and an anchor INSIDE the
+        replaced region deterministically clamps to the replacement
+        start (the user's SFX is never silently dropped by a keystroke;
+        the materializer's range guard keeps it valid).
+        """
+        new_len = new_end - new_start
+
+        def _map_abs(x: int) -> int:
+            if x < cs:
+                return x
+            if x >= ce:
+                return x + delta
+            return cs
+
+        def _clamp(o: int) -> int:
+            return max(0, min(o, new_len))
+
+        if block.sfx_insertions:
+            block.sfx_insertions = [
+                SfxInsertion(i.sfx_name, i.onomatopoeia,
+                             _clamp(_map_abs(old_start + i.offset) - new_start))
+                for i in block.sfx_insertions]
+        if block.pause_insertions:
+            block.pause_insertions = [
+                PauseInsertion(p.pause_type,
+                               _clamp(_map_abs(old_start + p.offset) - new_start))
+                for p in block.pause_insertions]
+
     def on_text_changed(self, new_text: str) -> None:
+        """Track block offsets through a single contiguous text edit.
+
+        P3.44.9 — the previous implementation classified blocks with
+        ``old_change_start <= block.start_offset`` -> shift BOTH ends,
+        which is only correct when the edit lies entirely BEFORE the
+        block. A deletion starting exactly at a block boundary shifted
+        the block INTO preceding text (the proven [53:99] -> [7:53]
+        corruption: overlap, wrong text ownership, duplicated
+        generation text, phantom blocks after save/load). The edit is
+        now transformed through ``_apply_edit_to_blocks`` — the single
+        authoritative rule shared with ``on_multi_replace``.
+        """
         if not self._blocks:
             self._last_text = new_text
             return
@@ -663,26 +780,18 @@ class NarrationBlockManager:
             common_suffix += 1
         old_change_start = common_prefix
         old_change_end = len(old_text) - common_suffix
-        new_change_start = common_prefix
         new_change_end = len(new_text) - common_suffix
-        delta = (new_change_end - new_change_start) - (old_change_end - old_change_start)
-        if delta == 0:
-            for block in self._blocks:
-                if old_change_start <= block.start_offset < old_change_end:
-                    block.manually_edited = True
+        inserted_len = new_change_end - old_change_start
+        if old_change_start == 0 and old_change_end == len(old_text):
+            # Whole-text replacement: nothing of the old document
+            # survives, so no block can keep ownership (set_text /
+            # history-reuse / clear paths). Scene loads are exempt —
+            # the P3.26 _loading_scene guard never reaches this method.
+            self._blocks = []
             self._last_text = new_text
             return
-        for block in self._blocks:
-            if old_change_start <= block.start_offset:
-                block.start_offset += delta
-                block.end_offset += delta
-            elif old_change_start < block.end_offset:
-                block.end_offset += delta
-                block.manually_edited = True
-            if block.start_offset < 0:
-                block.start_offset = 0
-            if block.end_offset < block.start_offset:
-                block.end_offset = block.start_offset
+        self._blocks = self._apply_edit_to_blocks(
+            self._blocks, old_change_start, old_change_end, inserted_len)
         self._last_text = new_text
 
     def on_multi_replace(
@@ -695,31 +804,20 @@ class NarrationBlockManager:
         """Handle Find and Replace All with multiple disjoint replacements.
 
         Each match is a ``(start, end)`` position in ``old_text``. All matches
-        are replaced with the same ``replacement`` string. This adjusts block
-        offsets correctly for each independent replacement — it does NOT treat
-        the span from the first match to the last match as one contiguous edit
-        (which was the root cause of the offset corruption bug).
+        are replaced with the same ``replacement`` string.
 
-        The algorithm:
-        1. Sort matches by position (ascending).
-        2. Process blocks in order of their original start offset.
-        3. For each block:
-           a. Consume all matches that end at or before the block's original
-              start offset. Their length deltas are accumulated into
-              ``cumulative_delta``.
-           b. Apply ``cumulative_delta`` to both ``start_offset`` and
-              ``end_offset`` (shifts the block to its new position).
-           c. Consume all matches that overlap with the block's original
-              range. For each overlapping match, add its length delta to
-              ``end_offset`` and to ``cumulative_delta``. Mark the block as
-              ``manually_edited``.
-        4. Update ``_last_text`` to ``new_text`` so the subsequent
-           ``textChanged`` signal from ``setPlainText`` is a no-op in
-           ``on_text_changed``.
+        P3.44.9 — every match is now transformed through the SINGLE
+        authoritative rule ``_apply_edit_to_blocks`` (the same rule as
+        ``on_text_changed``), applied sequentially in ascending match
+        order with a running coordinate shift. The previous per-block
+        implementation adjusted only ``end_offset`` for matches
+        overlapping a block, so a match COVERING a block's start left
+        the start unmapped (lost surviving characters) and a match
+        exactly covering a whole block left a zero-length phantom.
 
         This preserves:
         - Block identity (the same PromptBlock objects remain in the list)
-        - Block ordering (blocks are processed in ascending offset order)
+        - Block ordering (the sequential rule is monotone)
         - Block override values (emotion/style/speed/pitch/delivery untouched)
         - Locked state (``locked`` flag untouched)
         - Manual state (``manually_edited`` is only set True, never cleared)
@@ -742,64 +840,24 @@ class NarrationBlockManager:
             self._last_text = new_text
             return
 
-        # Sort matches by start position (ascending).
-        sorted_matches = sorted(matches)
         replacement_len = len(replacement)
-
-        # Snapshot original offsets — we modify blocks in place, so we need
-        # the original values to test match overlap correctly.
-        original_offsets = [(b, b.start_offset, b.end_offset) for b in self._blocks]
-        # Process blocks in ascending start-offset order. We iterate over the
-        # snapshot (not the live list) so reordering inside the list (if any)
-        # doesn't affect the loop. The blocks themselves are modified in place.
-        ordered = sorted(original_offsets, key=lambda t: t[1])
-
-        cumulative_delta = 0
-        match_idx = 0
-        n_matches = len(sorted_matches)
-
-        for block, orig_start, orig_end in ordered:
-            # (a) Consume matches that end at or before this block's original
-            #     start. Their entire length delta applies to everything after.
-            while (match_idx < n_matches
-                   and sorted_matches[match_idx][1] <= orig_start):
-                m_start, m_end = sorted_matches[match_idx]
-                cumulative_delta += replacement_len - (m_end - m_start)
-                match_idx += 1
-
-            # (b) Shift the block by the cumulative delta so far.
-            block.start_offset = orig_start + cumulative_delta
-            block.end_offset = orig_end + cumulative_delta
-
-            # (c) Consume matches that overlap with the block's original range.
-            #     A match overlaps if its start < block's original end AND
-            #     its end > block's original start. Since we already consumed
-            #     matches ending <= orig_start in step (a), any remaining match
-            #     with start < orig_end overlaps this block.
-            while match_idx < n_matches:
-                m_start, m_end = sorted_matches[match_idx]
-                if m_start >= orig_end:
-                    # Match is entirely after this block — stop.
-                    break
-                # Match overlaps with this block.
-                delta = replacement_len - (m_end - m_start)
-                block.end_offset += delta
-                cumulative_delta += delta
-                block.manually_edited = True
-                match_idx += 1
-
-            # Clamp to valid range.
-            if block.start_offset < 0:
-                block.start_offset = 0
-            if block.end_offset < block.start_offset:
-                block.end_offset = block.start_offset
+        # Sequential application: after each match, the following text is
+        # shifted by the accumulated delta of all matches processed so far,
+        # so match k occupies [m_start+shift, m_end+shift) in the CURRENT
+        # (partially transformed) coordinate system.
+        shift = 0
+        for m_start, m_end in sorted(matches):
+            self._blocks = self._apply_edit_to_blocks(
+                self._blocks, m_start + shift, m_end + shift,
+                replacement_len)
+            shift += replacement_len - (m_end - m_start)
 
         # Update _last_text so the textChanged signal triggered by
         # setPlainText(new_text) is a no-op in on_text_changed().
         self._last_text = new_text
         logger.info(
             "on_multi_replace: %d matches, %d blocks adjusted",
-            len(sorted_matches), len(self._blocks),
+            len(matches), len(self._blocks),
         )
 
     def to_dict(self) -> List[dict]:
