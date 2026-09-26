@@ -3286,3 +3286,111 @@ Dokumentált halasztott lelet: a KÉZI split/merge nem osztja újra az
 SFX/pause beszúrásokat (felhasználói művelet, nem Re-detect út — későbbi
 polish-fázis). A P3.44.8 (szabdaló), P3.44.9 (offszet), P3.45 (UX/
 hardening) és a Batch Generation Architecture V2 továbbra is halasztva.
+
+================================================================
+  P3.44.8 — MONDATSZABDALÓ-INTEGRITÁS
+        (bizonyított határmetszési regresszió minimális javítása)
+================================================================
+KONTEXTUS: a P3.44.5 kutatási audit RA-C lelete (P3.44.2 regresszió)
++ az RA-UX harmadik pontja (három egymástól eltérő szabdaló). Ez a
+menet CSAK a mondathatárokat, a szöveghűséget és a marker-integritást
+javítja — NINCS offszet-javítás (P3.44.9), NINCS Block→Part UX vagy
+becslés (P3.45), NINCS Batch-átírás, nincs NLP-keretrendszer.
+
+GYÖKÉROKOK (git-tel és futásidejű probával igazolva):
+1. A P3.44.2 (9acefbe commit) a marker-shielding/attachment érdekében
+   átírta a NarrationSplitter._split_sentences-t: a
+   SENTENCE_END_RE.split ((?<=[.!?…])\s+) helyett puszta
+   _PUNCT_RUN_RE-scan ([.!?…]+) — ELVESZETT az "értékjel után
+   whitespace következik" követelmény. Minden számjegyhez/betűhöz
+   tapadó pont "mondatvéggé" vált: "GLM 5.2" → "GLM 5." / "2";
+   "3.14", "v1.2", "test.hu", "U.S.A.", "12.50" ugyanígy töredezett.
+   A HeuristicBlockDetector._split_sentences ugyanezt a
+   kontextus-nélküli scan-t használta már a P3.44.2 ELŐTT is (ugyanaz
+   a hibaosztály, ott előző, régebbi eredetű).
+2. A _group_sentences " ".join-je a töredezett szöveget ÚJRAÉPÍTETTE
+   beszúrt szóközzel: "A GLM 5.2-t használtam." → "A GLM 5. 2-t
+   használtam." (a modell-BEMENETET mutálta), és a sortörést/több
+   szóközt csendben normalizálta egyetlen space-re.
+3. A PromptBuilder._detect_conflicts HARMADIK, független szabdalója
+   ((?<=[.!?])\s+, "…" nélkül, marker-ismeret nélkül) a lefordított
+   prompton a ". {sfx:...}"-ből kompilált SFX-tokent a KÖVETKEZŐ
+   mondatba tette (az RA-UX bizonyított eltérése).
+
+MEGOLDÁS (minimal, 3 érintett fájl + 1 új modul):
+- ÚJ engine/sentence_boundaries.py: AZ egyetlen határszerződés —
+  (1) SHIELDING: marker belsejében sosem határ; (2) ATTACHMENT: a
+  közvetlenül/whitespace-szel a központozás után álló marker-lánc a
+  lezárandó mondathoz tartozik (a mondat a lánc UTÁN ér véget — a
+  P3.44.2 viselkedés szó szerint); (3) CONTEXT: markerlánc nélkül CSAK
+  whitespace/szövegvége után lehet határ (a 9acefbe előtti követelmény
+  visszatétele — "3.14"/"v1.2"/"test.hu"/"U.S.A." egész marad);
+  (4) ABBREVIATION: egyetlen ASCII "." + whitespace + kisbetű =
+  rövidítés-folytatás, nem határ ("U.S.A. is known...", "stb. ez...");
+  a "…", "...", "?!" futok megtartják a határ-szemantikát.
+- EXACT-TEXT: split_sentence_units (sentence, separator) párokat ad —
+  mindkettő pontos forrás-szelet; a szeparátor az EREDETI whitespace.
+  A _group_sentence_units az eredeti szeparátorokkal joinol
+  (sentence_i + sep_i + sentence_{i+1}) — a " ".join-mutáció megszűnt;
+  szeparátort csak azonos partba kerülő mondatok fogyasztanak.
+  Invariáns (regresszió-zárolt): "".join(t+sep) == source.strip().
+- narration_splitter.py: _split_sentences/_split_sentence_units a
+  közös szkennerre delegál; _group_sentences → _group_sentence_units
+  (pontos szeparátorok, hossz-tudatos MAX_CHARS-számítás); a halott
+  SENTENCE_END_RE/_PUNCT_RUN_RE törölve; _INLINE_MARKER_RE alias.
+- block_detector.py: _split_sentences a find_sentence_ends-t használja
+  (a történelmi span-mechanika — záró " \t\r" az end-be, "\n" a between-
+  résben — változatlanul), így a Re-detect/blokkhatárok UGYANAZT a
+  határ-szerződést látják, mint a Batch-szabdaló.
+- prompt_builder.py: _detect_conflicts a split_tokenized_sentences-t
+  hívja — a kompilált prompton a <|sfx:tag|>Onom / <|prosody:pause|>
+  spanok játsszák a marker-szerepet (shielding+attachment), így az SFX/
+  pause-token a mondatával marad és a "…" is határ; a három
+  _INLINE_MARKER_RE-példány most ugyanaz az objektum (nem tudnak
+  eltérni).
+
+SZÁNDÉKOS KÖVETKEZMÉNY (dokumentálva): a hibásan felaprított szövegek
+KEVESEBB, nagyobb partot adnak (pl. "Az 1.1 és a 2.2 és a 3.3." ×12:
+RÉGI 7 part → ÚJ 4 part) — a helyes határmetszés természetes
+eredménye; a P3.44.6 slot-identitás/slot_id-modell ÉRINTETLEN (a
+Generate Long a meglévő életciklus szerint materializál).
+
+TESZTEK (új): tests/test_p3_44_8_sentence_splitter_integrity.py —
+62 teszt: §9-mátrix (alaphatárok 1-4, tizedesek 5-7, verziók 8-10,
+domainek 11-12, rövidítések 13-15, whitespace/pontos szöveg 16-20,
+inline markerek 21-25, többmondatos bekezdések 26-30),
+kereszt-implementációs egyezés (szabdaló vs detektor vs
+konfliktus-szabdaló; SFX/pause-token-attachment; onomatopoeia-shielding
+a kompilált alakban), forrás-span-tesztek (5.2/test.hu/U.S.A./IP sosem
+vágódik ketté), invariánsok 26 szöveges baterián (nincs
+karakterbeszúrás/nincs törlés/nincs átrendezés/marker-megőrzés/határ-
+megőrzés/rekonstrukciós körút), régi-szabály divergencia-tanú (a
+pre-P3.44.8 karakterizáció: 48 fragmentum a tizedes-szövegen,
+"A GLM 5. 2-t" mutáció), pipeline-felületek (split() plain/raw
+pontosság, pontos forrás-szeletek, blokk→part identitás
+source_block_id/block_index érintetlen, part-szám-csökkenés).
+
+RÉGI-ÚJ BIZONYÍTÁS git-extraktált b5d3c10 modulokkal: a RÉGI kódon
+2/15 hibadetektor zöld (a 2 zöld: a működő P3.44.2 marker-attachment és
+a hibás-egezés), az ÚJ kódon 15/15; kontrollok mindkettőn 4/4.
+
+VERIFIKÁCIÓ (teljes akkumulátor):
+- Új suite 62/62; P3.44.2 SFX 28/28 + P3.15 28/28 (a marker-
+  shielding/attachment és a blokk-szabdalás viselkedés változatlan).
+- P3.44.5 + P3.44.6 + P3.44.7 + P3.44.1 + P3.44.4 + P3.44 playback:
+  171/171; Scene output / Combine / provenance / batch-workflow
+  csomagok: 216/216.
+- Teljes battery: 1469/1469 zöld (a dokumentáltan rossz, csak-fában
+  élő test_p3_30_ux_fixes.py kivételével — P3.44.5/6/7 precedens; a
+  hibái a pristine P3.44.7-fán azonosak, stash-sel igazolva).
+- Launch smoke (valódi belépési út): 11/11.
+
+NEM TÖRTÉNT: nincs NLP-keretrendszer/rövidítés-szótár (a cím-rövidítések
+— "Mr. Smith" — továbbra is vágnak, az elő-P3.44.2 bázissal azonosan,
+ld. tervezési doc §10), nincs BatchManager/Generate Long/slot_id/
+provenancia-változás, nincs P3.44.9 offszet-javítás (on_text_changed/
+átfedés/árva-blokk halasztva), nincs P3.45 (Block→Part UX, duráció-
+becslés). A kézi split/merge SFX/pause-újraosztási lelet változatlanul
+halasztva (felhasználói művelet, független a szabdalótól — vizsgálva,
+nem azonos a hibával). A Batch Generation Architecture V2 továbbra is
+halasztva.

@@ -2215,6 +2215,19 @@ written).
   all fragment in both splitter implementations;
   `_group_sentences` `" ".join` additionally mutates the text (injects
   spaces into the model input).
+  **P3.44.8 RESOLUTION: CLOSED.** The boundary rules moved to ONE
+  authoritative scanner (`engine/sentence_boundaries.py`) used by
+  `NarrationSplitter`, `HeuristicBlockDetector` AND
+  `PromptBuilder._detect_conflicts`: punctuation glued to a digit/letter
+  is never a boundary (decimals/versions/domains/initials), a single
+  ASCII `.` before a lowercase continuation is an abbreviation
+  continuation, and sentence grouping joins with ORIGINAL separators
+  (span-based exact-text preservation — the `" ".join` mutation is
+  gone). Old-code proof: 2/15 defect detectors passed on the P3.44.7
+  tree, 15/15 after the fix (controls 4/4 both). Deferred edges (title
+  abbreviations, uppercase continuation, sentence-initial lowercase)
+  are documented in
+  `docs/design/P3_44_8_SENTENCE_SPLITTER_INTEGRITY.md` §10.
 - **RA-A2 — `on_text_changed` offset corruption on block-start
   deletions** (the real root of the reported "block delete" symptom):
   the boundary bug shifts block ranges (overlap, wrong text ownership,
@@ -2267,12 +2280,47 @@ written).
   (prompt characters counted, +102% measured); three divergent splitter
   implementations (the `PromptBuilder` conflict detector detaches SFX
   markers from their sentence).**
+  **P3.44.8 PARTIAL RESOLUTION:** the third finding is CLOSED — all
+  three sentence implementations delegate to the one authoritative
+  scanner and the compiled-prompt split keeps SFX/pause tokens attached
+  to their sentence (regression-locked,
+  `docs/design/P3_44_8_SENTENCE_SPLITTER_INTEGRITY.md` §8). Block ≠
+  Part UX and the duration-estimate inflation remain deferred to
+  P3.45.
 
 Each OPEN item is evidence-backed in the audit report. Of the report's
 recommended fix order, the first two items (join discipline, dialog
 re-wiring) were delivered by P3.44.5; the join-discipline item was
 COMPLETED by P3.44.6 (identity-first slot_id join — the
 fingerprint/plan-gate step is resolved by it, see RA-PLAN above);
-Re-detect semantics was COMPLETED by P3.44.7 (see RA-E above); the
-remaining order is: splitter rules (P3.44.8) → offset boundary fixes
-(P3.44.9) → estimate/duplication cleanup (P3.45).
+Re-detect semantics was COMPLETED by P3.44.7 (see RA-E above);
+splitter rules was COMPLETED by P3.44.8 (see RA-C above); the
+remaining order is: offset boundary fixes (P3.44.9) →
+estimate/duplication cleanup (P3.45).
+
+## P3.44.8 round — sentence splitter integrity
+
+### SS-1: punctuation-run scan split decimals/versions/domains/initials
+
+- **Status**: **CLOSED** (P3.44.8; audit item RA-C)
+- **Severity**: High (wrong part boundaries; text mutation reaching the
+  model input)
+- **Root cause (git-proven, commit 9acefbe / P3.44.2)**: the marker
+  shielding+attachment rewrite replaced
+  `SENTENCE_END_RE.split` (`(?<=[.!?…])\s+`) with a bare `[.!?…]+`
+  run scan, losing the whitespace requirement — every `.` glued to a
+  digit/letter ("GLM 5.2", "3.14", "v1.2", "test.hu", "U.S.A.") became
+  a "sentence boundary"; `HeuristicBlockDetector` had the same
+  context-free scan since before P3.44.2; `_group_sentences`'s
+  `" ".join` then INSERTED a space inside the split token
+  ("A GLM 5.2-t használtam." → "A GLM 5. 2-t használtam.") and
+  normalised newlines/multi-spaces.
+- **Fix**: `engine/sentence_boundaries.py` — the ONE authoritative
+  boundary contract (SHIELDING / ATTACHMENT / CONTEXT / ABBREVIATION
+  rules) + span-based exact-text units; all three implementations
+  delegate; grouping joins with original separators. 62 permanent
+  regression tests; old-code proof 2/15 → 15/15; full battery
+  1469/1469; launch smoke 11/11. Deferred edges documented in the
+  design doc §10 (title abbreviations, uppercase continuation,
+  sentence-initial lowercase, space-containing onomatopoeia in the
+  compiled representation).
