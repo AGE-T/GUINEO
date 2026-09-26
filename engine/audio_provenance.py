@@ -175,10 +175,37 @@ def slot_of_asset(asset: Dict[str, Any],
                   scene: Optional[Any] = None) -> Optional[str]:
     """The slot_id an AudioAsset belongs to, or None (legacy scope).
 
-    Join rule: match the asset's part_index against the Scene's expected
-    slots. Without a slot structure (legacy scene), a block asset maps to
-    ``{block_id}:{part_index}`` and a plain asset to ``plain:{part_index}``
-    — degraded but unambiguous; such scenes use legacy coverage anyway.
+    Join rule (P3.44.5 §8 — block-aware): when the Scene has an
+    expected slot structure, the asset's ``part_index`` selects the
+    CANDIDATE slot, and then part identity must AGREE:
+
+    * a block-derived slot (``slot.block_id`` set) qualifies ONLY an
+      asset carrying the SAME ``block_id`` — ``part_index`` alone is
+      NOT sufficient. A positional line-up across structurally
+      different generation plans (blocks edited / re-split / rebuilt
+      so the block identities differ) previously let OLD audio be
+      matched to NEW slots: derived coverage reported the new
+      structure as covered and Combine could assemble old audio under
+      the new structure (the audited data-integrity reproduction);
+    * a plain slot (``block_id`` None — plain / speaker-split part)
+      qualifies only a plain asset (``block_id`` None): positional
+      identity is the whole part identity in the plain model, and a
+      block-aware asset on the other side is evidence of a different
+      structure;
+    * a mismatch on either side returns None — a modern block-aware
+      asset never silently downgrades to a weaker positional
+      comparison when the stronger one failed.
+
+    A candidate position that no longer exists (the structure shrank)
+    also yields None for slotted scenes: the asset is from a different
+    structure and must not be re-anchored by the legacy synthesis.
+
+    LEGACY scope (scene without an expected slot structure, or
+    ``scene=None`` — pre-P3.28 scenes, external tools): a block asset
+    maps to ``{block_id}:{part_index}`` and a plain asset to
+    ``plain:{part_index}`` — degraded but unambiguous; such scenes use
+    legacy coverage anyway. This is the documented compatibility path
+    for block-less historical records: it is preserved verbatim.
     """
     if not isinstance(asset, dict):
         return None
@@ -187,12 +214,27 @@ def slot_of_asset(asset: Dict[str, Any],
     if part_index is None and not block_id:
         return None  # full-scene asset (single Generate) — not a slot
     if scene is not None:
-        try:
-            slot = _slot_by_part_index(scene).get(int(part_index))
-        except (TypeError, ValueError):
-            slot = None
-        if slot is not None:
-            return slot.get("slot_id")
+        slots_by_index = _slot_by_part_index(scene)
+        if slots_by_index:
+            try:
+                slot = slots_by_index.get(int(part_index))
+            except (TypeError, ValueError):
+                slot = None
+            if slot is None:
+                # The position does not exist in the current structure —
+                # the asset is from a structurally different plan.
+                return None
+            slot_block = slot.get("block_id")
+            if slot_block is not None:
+                # Block-derived slot: the SAME block identity is
+                # mandatory (P3.44.5 §8).
+                if block_id is not None and block_id == slot_block:
+                    return slot.get("slot_id")
+                return None
+            # Plain slot: positional identity, plain asset only.
+            if block_id is None:
+                return slot.get("slot_id")
+            return None
     if block_id:
         try:
             return block_slot_id(block_id, int(part_index or 1))

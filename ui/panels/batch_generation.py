@@ -1017,6 +1017,38 @@ class BatchGenerationDialog(QDialog):
                 lambda visible, _c=col: header.setSectionHidden(_c, not visible))
         menu.exec(header.viewport().mapToGlobal(pos))
 
+    def showEvent(self, event) -> None:
+        """P3.44.5 §4/§5: every presentation guarantees a LIVE manager
+        subscription + a presentation re-synced from manager truth.
+
+        ``closeEvent`` releases this dialog's manager listener, but the
+        dialog OBJECT survives close — the scene-aware single-instance
+        policy (MainWindow._focus_existing_batch_dialog) later finds and
+        re-shows the very SAME object. Before P3.44.5 that reuse path
+        never re-registered the listener: the reopened dialog received
+        NO further manager events, its rows kept the pre-close status
+        pills, the summary froze, and Start stayed disabled while
+        Pause/Stop stayed enabled — recovering only when the user pressed
+        Pause/Stop (those handlers force a local refresh). This is the
+        audited B/D reproduction.
+
+        Two actions on EVERY show (fresh construction AND reuse):
+
+        1. ``_connect_manager`` — now idempotent — re-establishes the
+           subscription released by closeEvent. Reconnection reuses the
+           SAME callback objects, so the manager's identity-based
+           dedupe guarantees exactly one logical listener (one manager
+           event → one UI update, never N duplicated updates).
+        2. ``_on_manager_changed`` re-syncs the table / buttons / summary
+           / scene surfaces from the manager's CURRENT state — covering
+           everything that changed while the dialog was closed and no
+           events were delivered (e.g. a batch that finished or was
+           stopped while the dialog was hidden).
+        """
+        self._connect_manager()
+        self._on_manager_changed()
+        super().showEvent(event)
+
     def hideEvent(self, event) -> None:
         """P3.35 §22/§28: persist user customizations as soon as the
         dialog leaves the screen (covers paths that bypass closeEvent)."""
@@ -1045,34 +1077,69 @@ class BatchGenerationDialog(QDialog):
         ``marshal_to_ui`` is remembered and restored on release (only
         when the manager still points at OURS — a newer owner is never
         clobbered).
+
+        P3.44.5 §4 (stale-listener fix): this method is now IDEMPOTENT,
+        and ``showEvent`` funnels every presentation of this dialog
+        (fresh construction AND reuse-after-close) through it. Rules:
+
+        * NO-OP while OUR exact listener is already registered — checked
+          against the manager's ACTUAL listener list, never a second
+          bookkeeping flag (external listener-list changes cannot leave
+          a stale "connected" belief). A newer marshal owner is never
+          clobbered here either: events still reach OUR listener through
+          the manager's listener list.
+        * The listener + marshaler callback objects are created ONCE per
+          dialog and REUSED on every reconnect, so ``add_on_changed``'s
+          identity dedupe guarantees exactly one logical listener — one
+          manager event can never fan out into duplicated UI updates
+          across close/reopen cycles.
+        * ``_prev_marshal`` is only re-snapshotted when the current
+          marshaler is NOT our own, so a reconnect can never adopt its
+          own marshaler as the "previous owner" to later restore.
         """
-        self._marshaler = _UiMarshaler(self)
-        self._on_changed_cb = lambda _m: self._on_manager_changed()
-        # Store the bound method ONCE: attribute access creates a NEW
-        # bound-method object each time, so ``is`` comparisons against
-        # ``self._marshaler.marshal`` would never match (release must
-        # compare with == / the stored reference).
-        self._marshal_cb = self._marshaler.marshal
-        self._prev_marshal = getattr(self._manager, "marshal_to_ui", None)
+        already = (
+            getattr(self, "_on_changed_cb", None) is not None
+            and any(cb is self._on_changed_cb
+                    for cb in self._manager.on_changed_listeners))
+        if already:
+            return
+        if getattr(self, "_on_changed_cb", None) is None:
+            self._marshaler = _UiMarshaler(self)
+            self._on_changed_cb = lambda _m: self._on_manager_changed()
+            # Store the bound method ONCE: attribute access creates a NEW
+            # bound-method object each time, so ``is`` comparisons against
+            # ``self._marshaler.marshal`` would never match (release must
+            # compare with == / the stored reference).
+            self._marshal_cb = self._marshaler.marshal
+            # Death safety: if this dialog is destroyed WITHOUT a
+            # closeEvent (e.g. parent teardown), never leave the manager
+            # calling a dead dialog. The closure captures only the
+            # manager + our callback — it does not keep the dialog alive.
+            # Connected ONCE (the callback objects live for the whole
+            # dialog lifetime), so reconnect cycles cannot accumulate
+            # duplicate destroy handlers.
+            _mgr, _on_cb, _mcb = (self._manager, self._on_changed_cb,
+                                  self._marshal_cb)
+
+            def _on_destroyed(*_args):
+                try:
+                    _mgr.remove_on_changed(_on_cb)
+                except Exception:
+                    pass
+                try:
+                    if getattr(_mgr, "marshal_to_ui", None) == _mcb:
+                        _mgr.marshal_to_ui = None
+                except Exception:
+                    pass
+            self.destroyed.connect(_on_destroyed)
+        # Snapshot the CURRENT marshal owner so release can give it back
+        # — never our own marshaler (a reconnect after a partial release
+        # must keep the original pre-dialog owner as the restore target).
+        current_marshal = getattr(self._manager, "marshal_to_ui", None)
+        if current_marshal != getattr(self, "_marshal_cb", None):
+            self._prev_marshal = current_marshal
         self._manager.marshal_to_ui = self._marshal_cb
         self._manager.add_on_changed(self._on_changed_cb)
-        # Death safety: if this dialog is destroyed WITHOUT a closeEvent
-        # (e.g. parent teardown), never leave the manager calling a dead
-        # dialog. The closure captures only the manager + our callback —
-        # it does not keep the dialog alive.
-        _mgr, _on_cb, _mcb = self._manager, self._on_changed_cb, self._marshal_cb
-
-        def _on_destroyed(*_args):
-            try:
-                _mgr.remove_on_changed(_on_cb)
-            except Exception:
-                pass
-            try:
-                if getattr(_mgr, "marshal_to_ui", None) == _mcb:
-                    _mgr.marshal_to_ui = None
-            except Exception:
-                pass
-        self.destroyed.connect(_on_destroyed)
 
     def _release_manager(self) -> None:
         """P3.44.1 §4: remove this dialog's listener and give the shared
