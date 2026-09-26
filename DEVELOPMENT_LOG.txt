@@ -3101,3 +3101,103 @@ DOKUMENTÁCIÓ ÉS KIADÁS (a fázis zárása, e menet):
   (minden verzió-ZIP a P3.23-tól) + GUINEO_P3.44.5_current.zip kiadás a
   korábbi konvenció szerint (a P3.44.4-es 279 fájl + README_HU.md + új
   tesztfájl + két tervezési/audit-dokumentum).
+
+================================================================
+  P3.44.6 — GENERATION STRUKTÚRA-INTEGRITÁS: slot_id IDENTITÁS
+        (tervezés + bizonyítás után a minimális mechanizmus)
+================================================================
+KONTEXTUS: a P3.44.6 tervezői kör (docs/design/
+P3_44_6_GENERATION_STRUCTURE_IDENTITY.md) futásidőben BIZONYÍTOTTA a
+positional-join két hibairányát: (1) HAMIS POZITÍV — megváltozott part-
+bontásnál a régi B1 asset (globális pozíció 3) a pozícióöröklés miatt
+új, máshogy határolt partnak (blkB:2) számított lefedettségnek; (2)
+HAMIS NEGATÍV — átrendezés/bővítés után az érintetlen slot valóban
+érvényes hangjávált elérhetetlenné (part_index = globális sorrend,
+ami nem a part stabil tulajdonsága). A válasz a tervezői stop-feltételre:
+a MEGLÉVŐ slot_id ("{block_id}:{part_of_block}" / "plain:{part_index}")
+— nem új architektúra. Ez a menet CSAK a bizonyított minimális
+mechanizmust valósította meg.
+
+AZ EGY AUTHORITATÍV MODERN IDENTITÁS (egyetlen, nem származtatják újra):
+  várt slot → BatchJob → GenerationRequest → GenerationResult
+  → register_generation_result → AudioAsset → slot_of_asset
+(zárt lánc; a tagséget a generálás IDEJÉBEN rögzítik, nem pozícióból
+vezetik le újra.)
+
+1. PROPAGÁCIÓ (additív, ~1 mező fájlónként):
+   - engine/models.py: GenerationRequest.slot_id, GenerationResult.slot_id,
+     AudioAsset.slot_id (+ to_dict) — opcionális, None = legacy/kézi/
+     teljes-jelenet generálás.
+   - engine/batch_manager.py: to_request() továbbítja a slot_id-t (a
+     queue-YAML perzisztencia már P3.28 óta létezett — csak a futásidejű
+     lánc hiányzott).
+   - engine/engine.py: request → result passthrough (a block_id mintájára).
+   - engine/audio_provenance.py: az EGYETLEN író
+     (register_generation_result) rábélyegzi az asset["slot_id"]-t.
+   - is_complete_scene_asset: a slot_id belép a Part-NEGATÍV bizonyításba
+     (aki slot-identitást hordoz, definíció szerint Part — sosem lehet
+     teljes-jelenet kimenet).
+
+2. IDENTITÁS-ELŐS JOIN (slot_of_asset):
+   - MODERN asset (van slot_id): a rögzített identitás AUTHORITATÍV —
+     pontosan az a várt slot az övé, BÁRhol áll most a struktúrában
+     (pozíció-független); nincs ilyen slot → None (a part már nem
+     létezik). Modern identitás-eltérés SOHA nem esik vissza pozíciós
+     illesztésre — pontosan ez volt a bizonyított hibaosztály.
+   - LEGACY asset (nincs slot_id — minden P3.44.6 ELŐTTI asset): a
+     dokumentált P3.44.5-ös pozíciós + blokk-tudatos join BETŰRŐL
+     BETŰRE változatlan (a scene=None / slot-struktúra nélküli szintézis-
+     hatókörrel együtt). Modern asset abban a hatókörben a rögzített
+     identitását adja vissza szó szerint (önleíró — nincs szintézis).
+   - part_index = továbbra is globális POZÍCIÓS METAADAT (fájlnevek,
+     Batch-megjelenítés, legacy join) — jelentése változatlan.
+   - VERZIÓZÁS NEM identitás: azonos slot + új beállítás
+     (temperature/top_k/top_p/seed/prompt) = azonos struktúra-identitás,
+     új generation_run / part_version.
+
+3. duplicate_job SZEMANTIKA (explicit vizsgálat, irányelv §5 — Case B):
+   a duplikált sor FÜGGETLEN kézi Batch-job (ugyanaz a prompt/beállítás/
+   kontextus), NEM az eredeti slot újragenerálása. A struktúra-
+   provenience (part/slot/run) tudatos KITÖRLÉSE maradt a helyes döntés:
+   a klón requestje nem hordoz slot-identitást → regisztrált assetje
+   NEM csatlakozik egyetlen várt slothoz sem (lefedettség/verziózás/
+   Combine érintetlen), sosem adja ki magát az eredeti slotért; a
+   scene/speaker/character kontextus megmarad (P3.23 §22 History-
+   származék). A slot_id vak másolása verzióütközést okozna (azonos
+   kimeneti fájlnév + csendes slot-csatlakozás). A döntés mostantól a
+   docstring-ben is dokumentált, és regressziós tesztekkel zárolva.
+
+4. TESZTEK (új): tests/test_p3_44_6_slot_identity.py — 40 teszt:
+   identitás-mátrix (§18 1–6 + 22: érvényes/érvénytelen/dekompozíció/
+   átrendezés/bővítés/nincs-visszabukás), propagáció a VALÓDI motor-
+   lancon (FakeHiggsModel modellhatár-fake, P3.27B minta — valódi
+   _execute_generation, valódi író, valódi join; a kimenet valódi,
+   lejátszható WAV), verziózás + beállítás-változás, Batch-munkaterület
+   (prompt-szerkesztés KÖRÚTJA megtartja a slot_id-t; per-part regen;
+   duplikátum-mátrix), Combine-feloldás valódi fájlokkal (érvényes/
+   rossz-slot/dekompozíció-váltás/kiválasztott verzió), perzisztencia
+   (Scene/BatchJob körút — a slot_id plain dict-kulcsként automatikusan
+   túléli a save/close/reopen-t; a feloldási viselkedés az újratöltés
+   után azonos), legacy kompatibilitás (P3.44.5 viselkedés szó szerint),
+   teljes-jelenet bizonyítás.
+   RÉGI-ÚJ BIZONYÍTÁS git stash-sel: a RÉGI kódon 17 vörös / 23 zöld
+   (a 17 pontosan az identitás-hibadetektorok; a 23 zöld az
+   érvényes-párosítás/legacy/perzisztencia kontrollok, amik nem
+   változhatnak), az ÚJ kódon 40/40.
+
+VERIFIKÁCIÓ (teljes akkumulátor):
+- Új suite 40/40; P3.44.5 29/29; P3.28 65/65; P3.44 playback + P3.31
+  40/40 (nem-regresszió).
+- Teljes battery: 1363/1363 zöld (a dokumentáltan rossz, csak-fában
+  élő test_p3_30_ux_fixes.py kivételével — P3.44.5 precedens, a pristine
+  baseline-én azonos hibákkal).
+- Launch smoke (valódi belépési út): 11/11.
+
+NEM TÖRTÉNT: nincs GenerationPlan, nincs fingerprint/STALE-motor, nincs
+Session-zár vagy al-session, nincs Batch/Combine/provenencia-architektúra
+vagy BatchManager-átírás, nincs séma-migráció (az asset slot_id plain
+dict-kulcs, a toleráns olvasók kapásból kezelik). Manual Concatenate:
+változatlanul sorrend-alapú (queue order), nulla operatív változás.
+Project Assembly változatlan absztrakciós szinten maradt. A P3.44.7–9
+(Re-detect / mondatszabdaló / blokk-offszet) és a Batch Generation
+Architecture V2 továbbra is halasztva.

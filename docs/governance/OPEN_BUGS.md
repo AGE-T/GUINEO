@@ -2233,6 +2233,21 @@ written).
   so a same-block asset whose part decomposition changed can still match
   positionally (documented residual in
   `docs/design/P3_44_5_STABILISATION_NOTES.md` §5).
+  **P3.44.6 RESOLUTION:** the residual is CLOSED for modern assets —
+  the authoritative structural identity is the existing `slot_id`, now
+  stamped on every AudioAsset at generation time and joined
+  identity-first (same-block/different-part no longer matches; reorder
+  and growth keep genuinely valid membership — see
+  `docs/design/P3_44_6_GENERATION_STRUCTURE_IDENTITY.md`). Legacy
+  (pre-P3.44.6) assets keep the P3.44.5 positional join by documented
+  compatibility necessity (they carry no recorded identity). The
+  fingerprint/plan-gate ARCHITECTURE itself was evaluated in the
+  P3.44.6 design round and REJECTED as unnecessary (structure identity
+  needed one passthrough field, not a fingerprint engine); text
+  staleness within a surviving slot remains deliberately undetected
+  per the P3.28 §0 product rule (the user alone decides when to
+  regenerate). Not scheduled for implementation; effectively subsumed
+  by the slot-identity model.
 - **RA-UX — Block ≠ Part UI invisibility; duration estimate inflation
   (prompt characters counted, +102% measured); three divergent splitter
   implementations (the `PromptBuilder` conflict detector detaches SFX
@@ -2241,6 +2256,8 @@ written).
 Each OPEN item is evidence-backed in the audit report; none is
 scheduled yet. Of the report's recommended fix order, the first two
 items (join discipline, dialog re-wiring) were delivered by P3.44.5;
-the remaining order is: fingerprint/plan gate → splitter rules →
+the join-discipline item was COMPLETED by P3.44.6 (identity-first
+slot_id join — the fingerprint/plan-gate step is resolved by it, see
+RA-PLAN above); the remaining order is: splitter rules →
 offset boundary fixes → Re-detect semantics → estimate/duplication
 cleanup.
