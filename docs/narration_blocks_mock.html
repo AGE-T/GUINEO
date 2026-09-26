@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpeechStudio — Narration Blocks Mock UI</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    background: #16171f;
+    color: #e6e8f2;
+    font-family: "Segoe UI", "SF Pro Text", sans-serif;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ===== TOP BAR ===== */
+  .top-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    background: #1e2030;
+    border-bottom: 1px solid #3a3d5c;
+  }
+  .top-bar label {
+    cursor: pointer;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #9aa0b8;
+  }
+  .top-bar label.active {
+    background: #2e3150;
+    color: #e6e8f2;
+    font-weight: 600;
+  }
+  .top-bar label:hover { background: #262940; }
+  .top-bar .spacer { flex: 1; }
+  .top-bar .raw-mode {
+    font-size: 11px;
+    color: #9aa0b8;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+  }
+  .top-bar .raw-mode input { accent-color: #14b8a6; }
+  .top-bar button {
+    background: #2e3150;
+    border: 1px solid #3a3d5c;
+    border-radius: 4px;
+    color: #e6e8f2;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .top-bar button:hover { background: #3a3d5c; }
+
+  /* ===== EDITOR AREA ===== */
+  .editor-container {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* Line numbers */
+  .line-numbers {
+    background: #1e2030;
+    color: #5c6080;
+    font-family: "Consolas", monospace;
+    font-size: 11px;
+    padding: 4px 6px 4px 4px;
+    text-align: right;
+    min-width: 36px;
+    user-select: none;
+    line-height: 20px;
+  }
+
+  /* Block gutter */
+  .block-gutter {
+    background: #1e2030;
+    border-right: 1px solid #3a3d5c;
+    min-width: 172px;
+    max-width: 172px;
+    overflow: hidden;
+    user-select: none;
+  }
+  .block-gutter-item {
+    position: relative;
+    padding: 2px 6px;
+    border-top: 1px solid;
+    font-size: 9px;
+    line-height: 14px;
+  }
+  .block-gutter-item:last-child {
+    border-bottom: 1px solid;
+  }
+  .block-gutter-item.normal { border-color: #14b8a6; }
+  .block-gutter-item.override { border-color: #fbbf24; }
+  .block-gutter-item.selected { border-color: #14b8a6; background: rgba(20, 184, 166, 0.08); }
+  
+  .block-gutter-item .b-num {
+    font-weight: bold;
+    font-size: 10px;
+    color: #9aa0b8;
+  }
+  .block-gutter-item.selected .b-num { color: #e6e8f2; }
+  
+  .block-gutter-item .b-detail {
+    color: #5c6080;
+  }
+  .block-gutter-item .b-detail.override { color: #14b8a6; }
+  .block-gutter-item .b-detail.info { color: #38bdf8; }
+  
+  .block-gutter-item .badge {
+    position: absolute;
+    top: 3px;
+    right: 4px;
+    background: #fbbf24;
+    color: #16171f;
+    font-size: 8px;
+    font-weight: bold;
+    border-radius: 3px;
+    padding: 1px 4px;
+  }
+  
+  /* Short block (compact mode) */
+  .block-gutter-item.compact .b-detail { display: none; }
+  
+  /* Left border bar */
+  .block-gutter-item::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+  }
+  .block-gutter-item.normal::before { background: #14b8a6; opacity: 0.85; }
+  .block-gutter-item.override::before { background: #fbbf24; opacity: 0.85; }
+  .block-gutter-item.selected::before { background: #14b8a6; opacity: 1; }
+
+  /* Text editor */
+  .text-editor {
+    flex: 1;
+    background: #16171f;
+    font-family: "Consolas", monospace;
+    font-size: 11px;
+    line-height: 20px;
+    padding: 4px 8px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+  }
+  
+  /* Block backgrounds in text */
+  .text-block {
+    padding: 1px 4px;
+    border-radius: 2px;
+    margin: 0 -4px;
+  }
+  .text-block.bg-a { background: rgba(37, 40, 64, 0.18); }
+  .text-block.bg-b { background: rgba(34, 37, 56, 0.18); }
+  .text-block.bg-selected { background: rgba(20, 184, 166, 0.14); }
+  .text-block.bg-override { background: rgba(251, 191, 36, 0.09); }
+
+  /* Syntax highlighting */
+  .tok-emotion { color: #14b8a6; font-weight: bold; }
+  .tok-style { color: #38bdf8; font-weight: bold; }
+  .tok-prosody { color: #fbbf24; font-weight: bold; }
+  .tok-sfx { color: #a855f7; font-weight: bold; }
+
+  /* ===== PROPERTIES PANEL ===== */
+  .properties-panel {
+    background: #1e2030;
+    border-top: 1px solid #3a3d5c;
+    padding: 8px 12px;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .props-title {
+    font-weight: bold;
+    font-size: 13px;
+    margin-bottom: 8px;
+    color: #e6e8f2;
+  }
+  .props-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .props-row input[type="checkbox"] {
+    accent-color: #14b8a6;
+    min-width: 140px;
+  }
+  .props-row select {
+    flex: 1;
+    background: #262940;
+    border: 1px solid #3a3d5c;
+    border-radius: 4px;
+    color: #e6e8f2;
+    padding: 3px 6px;
+    font-size: 12px;
+  }
+  .props-row .status {
+    min-width: 100px;
+    max-width: 120px;
+    font-size: 11px;
+    color: #9aa0b8;
+    padding: 0 4px;
+  }
+  .props-row .status.overridden {
+    color: #14b8a6;
+    font-weight: bold;
+  }
+  .props-bottom {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    align-items: center;
+  }
+  .props-bottom select {
+    flex: 1;
+    background: #262940;
+    border: 1px solid #3a3d5c;
+    border-radius: 4px;
+    color: #e6e8f2;
+    padding: 3px 6px;
+    font-size: 12px;
+  }
+  .props-bottom button {
+    background: #2e3150;
+    border: 1px solid #3a3d5c;
+    border-radius: 4px;
+    color: #e6e8f2;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .props-bottom button:hover { background: #3a3d5c; }
+  .props-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .props-actions button {
+    background: #2e3150;
+    border: 1px solid #3a3d5c;
+    border-radius: 4px;
+    color: #e6e8f2;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .props-actions button:hover { background: #3a3d5c; }
+
+  /* Inheritance banner */
+  .inheritance-banner {
+    background: #262940;
+    color: #38bdf8;
+    padding: 6px 8px;
+    font-size: 11px;
+    border: 1px solid #3a3d5c;
+    border-radius: 4px;
+    margin-bottom: 4px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== TOP BAR ===== -->
+<div class="top-bar">
+  <label>Plain Text</label>
+  <label class="active">Narration Blocks</label>
+  <label>Preview</label>
+  <div class="spacer"></div>
+  <label class="raw-mode"><input type="checkbox"> Raw Prompt Mode</label>
+  <button>🔍 Search</button>
+  <button>Re-detect</button>
+</div>
+
+<!-- ===== EDITOR AREA ===== -->
+<div class="editor-container">
+  <!-- Line numbers -->
+  <div class="line-numbers" id="lineNumbers"></div>
+  
+  <!-- Block gutter -->
+  <div class="block-gutter" id="blockGutter"></div>
+  
+  <!-- Text editor -->
+  <div class="text-editor" id="textEditor"></div>
+</div>
+
+<!-- ===== PROPERTIES PANEL ===== -->
+<div class="properties-panel">
+  <div class="inheritance-banner">Global Defaults — inherited by blocks without overrides</div>
+  <div class="props-title">Block 3: "Ez a harmadik mondat, amely..."</div>
+  
+  <div class="props-row">
+    <input type="checkbox"> <span style="min-width:140px">Emotion Override</span>
+    <select><option>Awe</option></select>
+    <span class="status overridden">Overridden</span>
+  </div>
+  <div class="props-row">
+    <input type="checkbox" checked> <span style="min-width:140px">Style Override</span>
+    <select><option>Whispering</option></select>
+    <span class="status overridden">Overridden</span>
+  </div>
+  <div class="props-row">
+    <input type="checkbox"> <span style="min-width:140px">Speed Override</span>
+    <select disabled><option>Normal</option></select>
+    <span class="status">Inherited: Normal</span>
+  </div>
+  <div class="props-row">
+    <input type="checkbox"> <span style="min-width:140px">Pitch Override</span>
+    <select disabled><option>Normal</option></select>
+    <span class="status">Inherited: Normal</span>
+  </div>
+  <div class="props-row">
+    <input type="checkbox"> <span style="min-width:140px">Delivery Override</span>
+    <select disabled><option>Normal</option></select>
+    <span class="status">Inherited: Normal</span>
+  </div>
+  
+  <div class="props-bottom">
+    <span>Label:</span>
+    <select><option>Story</option></select>
+    <button>🔒 Lock</button>
+  </div>
+  
+  <div class="props-actions">
+    <button>Split at Cursor</button>
+    <button>Merge with Above</button>
+    <button>Delete Block</button>
+  </div>
+</div>
+
+<script>
+// ===== DATA =====
+const blocks = [
+  {
+    num: 1,
+    name: "Introduction",
+    emotion: "Enthusiasm",
+    emotionOverride: true,
+    style: null,
+    styleOverride: false,
+    prosody: [],
+    overrides: 1,
+    text: '<span class="tok-emotion">&lt;|emotion:enthusiasm|&gt;</span>Hello world! This is the first block.',
+    lines: 1,
+    height: 20,
+  },
+  {
+    num: 2,
+    name: "Description",
+    emotion: "Contentment",
+    emotionOverride: false,
+    style: "Whispering",
+    styleOverride: true,
+    prosody: ["Slow"],
+    overrides: 2,
+    text: 'This is the second block. It has a longer text that spans multiple lines to show the full detail header.\nWith a second line here.',
+    lines: 2,
+    height: 40,
+  },
+  {
+    num: 3,
+    name: "Story",
+    emotion: "Awe",
+    emotionOverride: true,
+    style: "Whispering",
+    styleOverride: true,
+    prosody: [],
+    overrides: 2,
+    text: 'Ez a harmadik mondat, amely rövid.',
+    lines: 1,
+    height: 20,
+  },
+  {
+    num: 4,
+    name: "Conclusion",
+    emotion: null,
+    emotionOverride: false,
+    style: null,
+    styleOverride: false,
+    prosody: [],
+    overrides: 0,
+    text: 'This is the fourth block. It is a longer paragraph that demonstrates the full header detail with emotion, style, and prosody information all visible at once.\nSecond line.\nThird line.',
+    lines: 3,
+    height: 60,
+  },
+  {
+    num: 5,
+    name: "Short",
+    emotion: null,
+    emotionOverride: false,
+    style: null,
+    styleOverride: false,
+    prosody: [],
+    overrides: 0,
+    text: 'Rövid mondat.',
+    lines: 1,
+    height: 20,
+  },
+];
+
+const selectedBlock = 3; // Block 3 is selected
+
+// ===== RENDER =====
+function renderLineNumbers() {
+  const container = document.getElementById('lineNumbers');
+  let html = '';
+  let lineNum = 1;
+  blocks.forEach(block => {
+    for (let i = 0; i < block.lines; i++) {
+      html += `<div>${lineNum}</div>`;
+      lineNum++;
+    }
+  });
+  container.innerHTML = html;
+}
+
+function renderBlockGutter() {
+  const container = document.getElementById('blockGutter');
+  let html = '';
+  
+  blocks.forEach(block => {
+    const isSelected = block.num === selectedBlock;
+    const hasOverrides = block.overrides > 0;
+    
+    let classes = 'block-gutter-item';
+    if (isSelected) classes += ' selected';
+    else if (hasOverrides) classes += ' override';
+    else classes += ' normal';
+    
+    // Adaptive detail based on height
+    const isCompact = block.height < 40;
+    const isMedium = block.height >= 40 && block.height < 60;
+    if (isCompact) classes += ' compact';
+    
+    html += `<div class="${classes}" style="height: ${block.height}px;">`;
+    html += `<div class="b-num">B${block.num}</div>`;
+    
+    if (!isCompact) {
+      const emoClass = block.emotionOverride ? 'b-detail override' : 'b-detail';
+      const emoVal = block.emotion || '—';
+      html += `<div class="${emoClass}">E:${emoVal}</div>`;
+    }
+    
+    if (!isCompact && !isMedium) {
+      const styleClass = block.styleOverride ? 'b-detail override' : 'b-detail';
+      const styleVal = block.style || '—';
+      html += `<div class="${styleClass}">S:${styleVal}</div>`;
+      
+      if (block.prosody.length > 0) {
+        html += `<div class="b-detail info">P:${block.prosody.join(',')}</div>`;
+      }
+    }
+    
+    if (hasOverrides) {
+      html += `<span class="badge">${block.overrides}</span>`;
+    }
+    
+    html += '</div>';
+  });
+  
+  container.innerHTML = html;
+}
+
+function renderTextEditor() {
+  const container = document.getElementById('textEditor');
+  let html = '';
+  
+  blocks.forEach((block, i) => {
+    const isSelected = block.num === selectedBlock;
+    const hasOverrides = block.overrides > 0;
+    
+    let bgClass = 'text-block';
+    if (isSelected) bgClass += ' bg-selected';
+    else if (hasOverrides) bgClass += ' bg-override';
+    else bgClass += i % 2 === 0 ? ' bg-a' : ' bg-b';
+    
+    html += `<div class="${bgClass}">${block.text}\n</div>`;
+  });
+  
+  container.innerHTML = html;
+}
+
+// ===== INIT =====
+renderLineNumbers();
+renderBlockGutter();
+renderTextEditor();
+
+// Click to select block
+document.querySelectorAll('.block-gutter-item').forEach((item, idx) => {
+  item.addEventListener('click', () => {
+    alert(`Block ${blocks[idx].num} selected: "${blocks[idx].name}"\n` +
+          `Emotion: ${blocks[idx].emotion || 'inherited'}\n` +
+          `Style: ${blocks[idx].style || 'inherited'}\n` +
+          `Height: ${blocks[idx].height}px → ${blocks[idx].height < 40 ? 'compact' : blocks[idx].height < 60 ? 'medium' : 'full'} detail`);
+  });
+});
+</script>
+
+</body>
+</html>

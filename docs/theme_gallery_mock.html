@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpeechStudio — Theme Mock Gallery</title>
+<style>
+  /* ===== RESET ===== */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: "Segoe UI", "SF Pro Text", sans-serif;
+    background: #0a0a0f;
+    color: #e0e0e0;
+    padding: 20px;
+  }
+
+  h1 {
+    text-align: center;
+    font-size: 28px;
+    margin-bottom: 30px;
+    color: #ff00ff;
+    text-shadow: 0 0 10px #ff00ff;
+    font-family: "Courier New", monospace;
+    letter-spacing: 4px;
+  }
+
+  .theme-section {
+    margin-bottom: 60px;
+  }
+
+  .theme-label {
+    font-size: 18px;
+    font-weight: bold;
+    margin-bottom: 16px;
+    padding: 8px 16px;
+    border-radius: 4px;
+    display: inline-block;
+  }
+
+  /* ===== THEME: DARK (current) ===== */
+  .theme-dark {
+    --bg-base: #16171f;
+    --bg-surface: #1e2030;
+    --bg-surface-alt: #262940;
+    --bg-raised: #2e3150;
+    --border: #3a3d5c;
+    --border-focus: #14b8a6;
+    --text-primary: #e6e8f2;
+    --text-secondary: #9aa0b8;
+    --text-disabled: #5c6080;
+    --accent: #14b8a6;
+    --accent-hover: #0d9488;
+    --accent-text: #04211e;
+    --success: #4ade80;
+    --warning: #fbbf24;
+    --error: #f87171;
+    --info: #38bdf8;
+  }
+
+  /* ===== THEME: LIGHT ===== */
+  .theme-light {
+    --bg-base: #f5f6fa;
+    --bg-surface: #ffffff;
+    --bg-surface-alt: #eef0f5;
+    --bg-raised: #e0e3eb;
+    --border: #d0d4de;
+    --border-focus: #0d9488;
+    --text-primary: #1a1d2e;
+    --text-secondary: #6b7280;
+    --text-disabled: #b0b4c0;
+    --accent: #0d9488;
+    --accent-hover: #0f766e;
+    --accent-text: #ffffff;
+    --success: #16a34a;
+    --warning: #d97706;
+    --error: #dc2626;
+    --info: #0284c7;
+  }
+
+  /* ===== THEME: RETRO SYNTHWAVE ===== */
+  .theme-synthwave {
+    --bg-base: #0d0221;
+    --bg-surface: #1a0b2e;
+    --bg-surface-alt: #2d1b4e;
+    --bg-raised: #3d2562;
+    --border: #5c2d8f;
+    --border-focus: #ff00ff;
+    --text-primary: #e0e0ff;
+    --text-secondary: #b090d0;
+    --text-disabled: #604080;
+    --accent: #ff00ff;
+    --accent-hover: #cc00cc;
+    --accent-text: #0d0221;
+    --success: #00ff88;
+    --warning: #ffaa00;
+    --error: #ff0055;
+    --info: #00ddff;
+    --glow: 0 0 8px currentColor;
+    --grid-line: rgba(255, 0, 255, 0.08);
+  }
+
+  /* ===== THEME: RETRO CONSOLE (NES/Game Boy inspired) ===== */
+  .theme-retro-console {
+    --bg-base: #0f380f;
+    --bg-surface: #1a4a1a;
+    --bg-surface-alt: #2a5a2a;
+    --bg-raised: #3a6a3a;
+    --border: #5a8a5a;
+    --border-focus: #9bbc0f;
+    --text-primary: #9bbc0f;
+    --text-secondary: #6a8a3a;
+    --text-disabled: #3a5a2a;
+    --accent: #9bbc0f;
+    --accent-hover: #8aaa0d;
+    --accent-text: #0f380f;
+    --success: #9bbc0f;
+    --warning: #e0c020;
+    --error: #c02020;
+    --info: #4080c0;
+    --font-mono: "Courier New", "Consolas", monospace;
+  }
+
+  /* ===== MOCK WINDOW ===== */
+  .mock-window {
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-size: 12px;
+    display: flex;
+    flex-direction: column;
+    height: 420px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  }
+
+  /* Menu bar */
+  .menu-bar {
+    display: flex;
+    gap: 0;
+    padding: 4px 8px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+  }
+  .menu-bar span {
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    color: var(--text-secondary);
+  }
+  .menu-bar span:hover { background: var(--bg-surface-alt); color: var(--text-primary); }
+
+  /* Toolbar */
+  .toolbar {
+    display: flex;
+    gap: 4px;
+    padding: 4px 8px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .toolbar button {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text-primary);
+    padding: 3px 10px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .toolbar button:hover { background: var(--border); }
+  .toolbar button.primary {
+    background: var(--accent);
+    color: var(--accent-text);
+    border-color: var(--accent);
+    font-weight: bold;
+  }
+
+  /* Main area: sidebar | editor | panel */
+  .main-area {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 180px;
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+  }
+  .sidebar-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-tab {
+    flex: 1;
+    padding: 4px;
+    text-align: center;
+    font-size: 10px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  .sidebar-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .sidebar-content {
+    flex: 1;
+    padding: 6px;
+    overflow-y: auto;
+  }
+  .sidebar-item {
+    padding: 4px 6px;
+    border-radius: 3px;
+    margin-bottom: 2px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .sidebar-item:hover { background: var(--bg-surface-alt); }
+  .sidebar-item.selected { background: var(--bg-surface-alt); color: var(--text-primary); }
+
+  /* Editor */
+  .editor {
+    flex: 1;
+    background: var(--bg-base);
+    display: flex;
+    flex-direction: column;
+  }
+  .editor-modebar {
+    display: flex;
+    gap: 6px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .editor-modebar label {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .editor-modebar label.active {
+    background: var(--bg-surface-alt);
+    color: var(--text-primary);
+  }
+  .editor-text {
+    flex: 1;
+    padding: 8px;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    overflow-y: auto;
+    white-space: pre-wrap;
+  }
+  .editor-text .ln {
+    color: var(--text-disabled);
+    margin-right: 8px;
+    user-select: none;
+  }
+
+  /* Control panel */
+  .control-panel {
+    width: 220px;
+    background: var(--bg-surface);
+    border-left: 1px solid var(--border);
+    padding: 6px;
+    overflow-y: auto;
+  }
+  .cp-section {
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .cp-section-title {
+    background: var(--bg-surface-alt);
+    padding: 3px 6px;
+    font-size: 10px;
+    font-weight: bold;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .cp-section-content {
+    padding: 4px 6px;
+  }
+  .cp-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 3px;
+  }
+  .cp-row label {
+    font-size: 10px;
+    color: var(--text-secondary);
+    min-width: 50px;
+  }
+  .cp-row select, .cp-row input {
+    flex: 1;
+    background: var(--bg-surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text-primary);
+    padding: 2px 4px;
+    font-size: 10px;
+  }
+  .cp-row select:focus, .cp-row input:focus {
+    border-color: var(--border-focus);
+  }
+  .cp-preview {
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 4px;
+    font-family: monospace;
+    font-size: 10px;
+    color: var(--text-secondary);
+    min-height: 40px;
+    margin-top: 4px;
+  }
+
+  /* Status bar */
+  .status-bar {
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border);
+    padding: 3px 8px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text-secondary);
+  }
+
+  /* Waveform */
+  .waveform {
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border);
+    padding: 4px 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+  }
+  .waveform-bars {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    height: 100%;
+  }
+  .waveform-bar {
+    background: var(--accent);
+    width: 2px;
+    border-radius: 1px;
+    opacity: 0.7;
+  }
+
+  /* ===== SYNTHWAVE SPECIFICS ===== */
+  .theme-synthwave .mock-window {
+    border: 2px solid var(--accent);
+    box-shadow: 0 0 20px rgba(255, 0, 255, 0.3), inset 0 0 40px rgba(255, 0, 255, 0.05);
+  }
+  .theme-synthwave .menu-bar {
+    background: linear-gradient(90deg, #0d0221, #1a0b2e, #0d0221);
+    border-bottom: 1px solid var(--accent);
+  }
+  .theme-synthwave .toolbar button.primary {
+    box-shadow: 0 0 10px var(--accent);
+    text-shadow: 0 0 4px var(--accent-text);
+  }
+  .theme-synthwave .editor-text {
+    text-shadow: 0 0 2px currentColor;
+  }
+  .theme-synthwave .editor-text .tok {
+    text-shadow: 0 0 6px currentColor;
+  }
+  .theme-synthwave .cp-section {
+    border-color: var(--border);
+    box-shadow: 0 0 4px rgba(255, 0, 255, 0.1);
+  }
+  .theme-synthwave .cp-section-title {
+    background: linear-gradient(90deg, #2d1b4e, #1a0b2e);
+    color: var(--accent);
+    text-shadow: 0 0 3px var(--accent);
+  }
+  .theme-synthwave .sidebar-tab.active {
+    text-shadow: 0 0 4px var(--accent);
+  }
+  .theme-synthwave .waveform-bar {
+    box-shadow: 0 0 3px var(--accent);
+  }
+  .theme-synthwave .status-bar {
+    border-top: 1px solid var(--accent);
+    background: linear-gradient(90deg, #0d0221, #1a0b2e);
+  }
+
+  /* Grid background for synthwave */
+  .theme-synthwave .editor-text {
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  /* ===== RETRO CONSOLE SPECIFICS ===== */
+  .theme-retro-console .mock-window {
+    border: 3px solid var(--border);
+    border-radius: 0;
+    font-family: var(--font-mono);
+    image-rendering: pixelated;
+  }
+  .theme-retro-console .menu-bar {
+    border-bottom: 2px solid var(--border);
+    font-family: var(--font-mono);
+  }
+  .theme-retro-console .menu-bar span {
+    font-family: var(--font-mono);
+    letter-spacing: 1px;
+  }
+  .theme-retro-console .toolbar button {
+    border-radius: 0;
+    font-family: var(--font-mono);
+    border: 2px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .theme-retro-console .toolbar button.primary {
+    border: 2px solid var(--accent);
+    box-shadow: 2px 2px 0 var(--border);
+  }
+  .theme-retro-console .toolbar button:active {
+    transform: translate(1px, 1px);
+    box-shadow: 1px 1px 0 var(--border);
+  }
+  .theme-retro-console .editor-text {
+    font-family: var(--font-mono);
+    letter-spacing: 1px;
+    line-height: 1.6;
+  }
+  .theme-retro-console .cp-section {
+    border: 2px solid var(--border);
+    border-radius: 0;
+  }
+  .theme-retro-console .cp-section-title {
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 2px solid var(--border);
+  }
+  .theme-retro-console .cp-row select, .theme-retro-console .cp-row input {
+    border-radius: 0;
+    border: 2px solid var(--border);
+    font-family: var(--font-mono);
+  }
+  .theme-retro-console .waveform-bar {
+    width: 3px;
+    border-radius: 0;
+  }
+  .theme-retro-console .sidebar-tab {
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  /* Syntax highlighting tokens */
+  .tok-emotion { color: #14b8a6; font-weight: bold; }
+  .tok-style { color: #38bdf8; font-weight: bold; }
+  .tok-prosody { color: #fbbf24; font-weight: bold; }
+  .tok-sfx { color: #a855f7; font-weight: bold; }
+
+  .theme-synthwave .tok-emotion { color: #00ff88; }
+  .theme-synthwave .tok-style { color: #00ddff; }
+  .theme-synthwave .tok-prosody { color: #ffaa00; }
+  .theme-synthwave .tok-sfx { color: #ff00ff; }
+
+  .theme-retro-console .tok-emotion { color: #9bbc0f; }
+  .theme-retro-console .tok-style { color: #c0d040; }
+  .theme-retro-console .tok-prosody { color: #e0c020; }
+  .theme-retro-console .tok-sfx { color: #80a030; }
+
+  .theme-light .tok-emotion { color: #0d9488; }
+  .theme-light .tok-style { color: #0284c7; }
+  .theme-light .tok-prosody { color: #d97706; }
+  .theme-light .tok-sfx { color: #7c3aed; }
+</style>
+</head>
+<body>
+
+<h1>SPEECHSTUDIO — THEME GALLERY</h1>
+
+<!-- ================================================================ -->
+<!-- DARK THEME (current) -->
+<!-- ================================================================ -->
+<div class="theme-section">
+  <div class="theme-label" style="background: #1e2030; color: #14b8a6; border: 1px solid #3a3d5c;">
+    🌙 Dark Theme (current)
+  </div>
+  <div class="mock-window theme-dark">
+    <div class="menu-bar">
+      <span>File</span><span>Generation</span><span>Tools</span><span>View</span><span>Help</span>
+    </div>
+    <div class="toolbar">
+      <button class="primary">▶ Generate</button>
+      <button>⏹ Stop</button>
+      <button>↻ Replay</button>
+      <button>📁 Outputs</button>
+      <button>👥 Voices</button>
+      <button>⚙ Settings</button>
+    </div>
+    <div class="main-area">
+      <div class="sidebar">
+        <div class="sidebar-tabs">
+          <div class="sidebar-tab">Voices</div>
+          <div class="sidebar-tab active">History</div>
+          <div class="sidebar-tab">Presets</div>
+          <div class="sidebar-tab">Outputs</div>
+        </div>
+        <div class="sidebar-content">
+          <div class="sidebar-item">📝 test01_plain.wav</div>
+          <div class="sidebar-item">📝 test02a_anger.wav</div>
+          <div class="sidebar-item selected">📝 test03_emotion.wav</div>
+          <div class="sidebar-item">📝 test04_style.wav</div>
+        </div>
+      </div>
+      <div class="editor">
+        <div class="editor-modebar">
+          <label>Plain Text</label>
+          <label class="active">Narration Blocks</label>
+          <label>Preview</label>
+          <span style="flex:1"></span>
+          <label><input type="checkbox" style="accent-color: #14b8a6;"> Raw Mode</label>
+        </div>
+        <div class="editor-text"><span class="ln">1</span><span class="tok-emotion">&lt;|emotion:enthusiasm|&gt;</span><span class="tok-style">&lt;|style:shouting|&gt;</span>
+<span class="ln">2</span>Fantasztikus hírem van! Sikerült, végre minden összeállt!
+<span class="ln">3</span>
+<span class="ln">4</span><span class="tok-emotion">&lt;|emotion:sadness|&gt;</span><span class="tok-style">&lt;|style:whispering|&gt;</span>
+<span class="ln">5</span>Sajnos ezúttal nem sikerült úgy, ahogy reméltem.
+<span class="ln">6</span>
+<span class="ln">7</span><span class="tok-emotion">&lt;|emotion:awe|&gt;</span><span class="tok-prosody">&lt;|prosody:speed_very_slow|&gt;</span>
+<span class="ln">8</span>Erre a pillanatra egész életemben emlékezni fogok.</div>
+      </div>
+      <div class="control-panel">
+        <div class="cp-section">
+          <div class="cp-section-title">Voice</div>
+          <div class="cp-section-content">
+            <div class="cp-row">
+              <select><option>Thomas (5.2s)</option></select>
+            </div>
+          </div>
+        </div>
+        <div class="cp-section">
+          <div class="cp-section-title">Emotion</div>
+          <div class="cp-section-content">
+            <div class="cp-row"><label>Active:</label><span style="color:#14b8a6;font-weight:bold;">Enthusiasm</span></div>
+          </div>
+        </div>
+        <div class="cp-section">
+          <div class="cp-section-title">Prosody</div>
+          <div class="cp-section-content">
+            <div class="cp-row"><label>Speed:</label><select><option>Normal</option></select></div>
+            <div class="cp-row"><label>Pitch:</label><select><option>Normal</option></select></div>
+            <div class="cp-row"><label>Delivery:</label><select><option>Normal</option></select></div>
+          </div>
+        </div>
+        <div class="cp-section">
+          <div class="cp-section-title">Prompt Preview</div>
+          <div class="cp-section-content">
+            <div class="cp-preview"><span class="tok-emotion">&lt;|emotion:enthusiasm|&gt;</span><span class="tok-style">&lt;|style:shouting|&gt;</span>Fantasztikus hírem van!</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="waveform">
+      <button style="background:var(--bg-raised);border:1px solid var(--border);color:var(--text-primary);border-radius:3px;padding:2px 6px;cursor:pointer;font-size:10px;">▶</button>
+      <div class="waveform-bars" id="wf-dark"></div>
+      <span style="color:var(--text-secondary);font-size:10px;">4.84s</span>
+    </div>
+    <div class="status-bar">
+      <span>● Model: Loaded (float16) | GPU: RTX 5070</span>
+      <span>Voice: Thomas | Generated: 4.84s in 15.68s (RTF 3.24)</span>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- LIGHT THEME -->
+<!-- ================================================================ -->
+<div class="theme-section">
+  <div class="theme-label" style="background: #ffffff; color: #0d9488; border: 1px solid #d0d4de;">
+    ☀️ Light Theme
+  </div>
+  <div class="mock-window theme-light">
+    <div class="menu-bar">
+      <span>File</span><span>Generation</span><span>Tools</span><span>View</span><span>Help</span>
+    </div>
+    <div class="toolbar">
+      <button class="primary">▶ Generate</button>
+      <button>⏹ Stop</button>
+      <button>↻ Replay</button>
+      <button>📁 Outputs</button>
+      <button>👥 Voices</button>
+      <button>⚙ Settings</button>
+    </div>
+    <div class="main-area">
+      <div class="sidebar">
+        <div class="sidebar-tabs">
+          <div class="sidebar-tab">Voices</div>
+          <div class="sidebar-tab active">History</div>
+          <div class="sidebar-tab">Presets</div>
+          <div class="sidebar-tab">Outputs</div>
+        </div>
+        <div class="sidebar-content">
+          <div class="sidebar-item">📝 test01_plain.wav</div>
+          <div class="sidebar-item">📝 test02a_anger.wav</div>
+          <div class="sidebar-item selected">📝 test03_emotion.wav</div>
+          <div class="sidebar-item">📝 test04_style.wav</div>
+        </div>
+      </div>
+      <div class="editor">
+        <div class="editor-modebar">
+          <label>Plain Text</label>
+          <label class="active">Narration Blocks</label>
+          <label>Preview</label>
+          <span style="flex:1"></span>
+          <label><input type="checkbox" style="accent-color: #0d9488;"> Raw Mode</label>
+        </div>
+        <div class="editor-text"><span class="ln">1</span><span class="tok-emotion">&lt;|emotion:enthusiasm|&gt;</span><span class="tok-style">&lt;|style:shouting|&gt;</span>
+<span class="ln">2</span>Fantasztikus hírem van! Sikerült, végre minden összeállt!
+<span class="ln">3</span>
+<span class="ln">4</span><span class="tok-emotion">&lt;|emotion:sadness|&gt;</span><span class="tok-style">&lt;|style:whispering|&gt;</span>
+<span class="ln">5</span>Sajnos ezúttal nem sikerült úgy, ahogy reméltem.
+<span class="ln">6</span>
+<span class="ln">7</span><span class="tok-emotion">&lt;|emotion:awe|&gt;</span><span class="tok-prosody">&lt;|prosody:speed_very_slow|&gt;</span>
+<span class="ln">8</span>Erre a pillanatra egész életemben emlékezni fogok.</div>
+      </div>
+      <div class="control-panel">
+        <div class="cp-section">
+          <div class="cp-section-title">Voice</div>
+          <div class="cp-section-content">
+            <div class="cp-row">
+              <select><option>Thomas (5.2s)</option></select>
+            </div>
+          </div>
+        </div>
+        <div class="cp-section">
+          <div class="cp-section-title">Emotion</div>
+          <div class="cp-section-content">
+            <div class="cp-row"><label>Active:</label><span style="color:#0d9488;font-weight:bold;">Enthusiasm</span></div>
+          </div>
+        </div>
+        <div class="cp-section">
+          <div class="cp-section-title">Prosody</div>
+          <div class="cp-section-content">
+            <div class="cp-row"><label>Speed:</label><select><option>Normal</option></select></div>
+            <div class="cp-row"><label>Pitch:</label><select><option>Normal</option></select></div>
+            <div class="cp-row"><label>Delivery:</label><select><option>Normal</option></select></div>
+          </div>
+        </div>
+        <div class="cp-section">
+          <div class="cp-section-title">Prompt Preview</div>
+          <div class="cp-section-content">
+            <div class="cp-preview"><span class="tok-emotion">&lt;|emotion:enthusiasm|&gt;</span><span class="tok-style">&lt;|style:shouting|&gt;</span>Fantasztikus hírem van!</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="waveform">
+      <button style="background:var(--bg-raised);border:1px solid var(--border);color:var(--text-primary);border-radius:3px;padding:2px 6px;cursor:pointer;font-size:10px;">▶</button>
+      <div class="waveform-bars" id="wf-light"></div>
+      <span style="color:var(--text-secondary);font-size:10px;">4.84s</span>
+    </div>
+    <div class="status-bar">
+      <span>● Model: Loaded (float16) | GPU: RTX 5070</span>
+      <span>Voice: Thomas | Generated: 4.84s in 15.68s (RTF 3.24)</span>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- SYNTHWAVE THEME -->
+<!-- ================================================================ -->
+<div class="theme-section">
+  <div class="theme-label" style="background: #1a0b2e; color: #ff00ff; border: 1px solid #5c2d8f; text-shadow: 0 0 6px #ff00ff;">
+    🌴 Synthwave Theme
+  </div>
+  <div class="mock-window theme-synthwave">
+    <div class="menu-bar">
+      <span>File</span><span>Generation</span><span>Tools</span><span>View</span><span>Help</span>
+    </div>
+    <div class="toolbar">
+      <button class="primary">▶ Generate</button>
+      <button>⏹ Stop</button>
+      <button>↻ Replay</button>
+      <button>📁 Outputs</button>
+      <button>👥 Voices</button>
+      <button>⚙ Settings</button>
+    </div>
+    <div class="main-area">
+      <div class="sidebar">
+        <div class="sidebar-tabs">
+          <div class="sidebar-tab">Voices</div>
+          <div class="sidebar-tab active">History</div>
+          <div class="sidebar-tab">Presets</div>
+          <div class="sidebar-tab">Outputs</div>
+        </div>
+        <div class="sidebar-content">
+          <div class="sidebar-item">📝 test01_plain.wav</div>
+          <div class="sidebar-item">📝 test02a_anger.wav</div>
+          <div class="sidebar-item selected">📝 test03_emotion.wav</div>
+          <div class="sidebar-item">📝 test04_style.wav</div>
+        </div>
+      </div>
+      <div class="editor">
+        <div class="editor-modebar">
+          <label>Plain Text</label>
+          <label class="active">Narration Blocks</label>
+          <label>Preview</label>
+          <span style="flex:1"></span>
+          <label><input type="checkbox" style="accent-color: #ff00ff;"> Raw Mode</label>
+        </div>
+        <div class="editor-text"><span class="ln">1</span><span class="tok-emotion">&lt;|emotion:enthusiasm|&gt;</span><span class="tok-style">&lt;|style:shouting|&gt;</span>
+<span class="ln">2</span>Fantasztikus hírem van! Sikerült, végre minden összeállt!
+<span class="ln">3</span>
+<span class="ln">4</span><span class="tok-emotion">&lt;|emotion:sadness|&gt;</span><span class="tok-style">&lt;|style:whispering|&gt;</span>
+<span class="ln">5</span>Sajnos ezúttal nem sikerült úgy, ahogy reméltem.
+<span class="ln">6</span>
+<span class="ln">7</span><span class="tok-emotion">&lt;|emotion:awe|&gt;</span><span class="tok-prosody">&lt;|prosody:speed_very_slow|&gt;</span>
+<span class="ln">8</span>Erre a pillanatra egész életemben emlékezni fogok.</div>
+      </div>
+      <div class="control-panel">
+        <div class="cp-section">
+          <div class="cp-section-title">Voice</div>
+          <div class="cp-section-content">
+            <div class="cp-row">
+              <select><option>Thomas (5.2s)</option></select>
+            </div>
+          </div>
+        </div>
+        <div class="cp-section">
+          <div class="cp-section-title">Emotion</div>
+          <div class="cp-section-content">
+            <div class="cp-row"><label>Active:</label><span style="color:#00ff88;font-weight:bold;text-shadow:0 0 4px #00ff88;">Enthusiasm</span></div>
+          </div>
+        </div>
+        <div class="cp-section">
+          <div class="cp-section-title">Prosody</div>
+          <div class="cp-section-content">
+            <div class="cp-row"><label>Speed:</label><select><option>Normal</option></select></div>
+            <div class="cp-row"><label>Pitch:</label><select><option>Normal</option></select></div>
+            <div class="cp-row"><label>Delivery:</label><select><option>Normal</option></select></div>
+          </div>
+        </div>
+        <div class="cp-section">
+          <div class="cp-section-title">Prompt Preview</div>
+          <div class="cp-section-content">
+            <div class="cp-preview"><span class="tok-emotion">&lt;|emotion:enthusiasm|&gt;</span><span class="tok-style">&lt;|style:shouting|&gt;</span>Fantasztikus hírem van!</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="waveform">
+      <button style="background:var(--bg-raised);border:1px solid var(--border);color:var(--text-primary);border-radius:3px;padding:2px 6px;cursor:pointer;font-size:10px;">▶</button>
+      <div class="waveform-bars" id="wf-synth"></div>
+      <span style="color:var(--text-secondary);font-size:10px;">4.84s</span>
+    </div>
+    <div class="status-bar">
+      <span style="color:#00ff88;">● Model: Loaded (bfloat16) | GPU: RTX 5070</span>
+      <span style="color:#ff00ff;">Voice: Thomas | Generated: 4.84s in 15.68s (RTF 3.24)</span>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- RETRO CONSOLE THEME -->
+<!-- ================================================================ -->
+<div class="theme-section">
+  <div class="theme-label" style="background: #0f380f; color: #9bbc0f; border: 2px solid #5a8a5a; font-family: 'Courier New', monospace; letter-spacing: 2px;">
+    🎮 Retro Console Theme
+  </div>
+  <div class="mock-window theme-retro-console">
+    <div class="menu-bar">
+      <span>FILE</span><span>GENERATION</span><span>TOOLS</span><span>VIEW</span><span>HELP</span>
+    </div>
+    <div class="toolbar">
+      <button class="primary">▶ GEN</button>
+      <button>⏹ STOP</button>
+      <button>↻ REPLAY</button>
+      <button>📁 OUT</button>
+      <button>👥 VOICE</button>
+      <button>⚙ SET</button>
+    </div>
+    <div class="main-area">
+      <div class="sidebar">
+        <div class="sidebar-tabs">
+          <div class="sidebar-tab">VOICES</div>
+          <div class="sidebar-tab active">HISTORY</div>
+          <div class="sidebar-tab">PRESETS</div>
+          <div class="sidebar-tab">OUTPUTS</div>
+        </div>
+        <div class="sidebar-content">
+          <div class="sidebar-item">> test01_plain.wav</div>
+          <div class="sidebar-item">> test02a_anger.wav</div>
+          <div class="sidebar-item selected">> test03_emotion.wav</div>
+          <div class="sidebar-item">> test04_style.wav</div>
+        </div>
+      </div>
+      <div class="editor">
+        <div class="editor-modebar">
+          <label>PLAIN</label>
+          <label class="active">BLOCKS</label>
+          <label>PREVIEW</label>
+          <span style="flex:1"></span>
+          <label><input type="checkbox" style="accent-color: #9bbc0f;"> RAW</label>
+        </div>
+        <div class="editor-text"><span class="ln">1</span><span class="tok-emotion">&lt;|emotion:enthusiasm|&gt;</span><span class="tok-style">&lt;|style:shouting|&gt;</span>
+<span class="ln">2</span>FANTASZTIKUS HIREM VAN!
+<span class="ln">3</span>
+<span class="ln">4</span><span class="tok-emotion">&lt;|emotion:sadness|&gt;</span><span class="tok-style">&lt;|style:whispering|&gt;</span>
+<span class="ln">5</span>SAJNOS EZUTTAL NEM SIKERULT.
+<span class="ln">6</span>
+<span class="ln">7</span><span class="tok-emotion">&lt;|emotion:awe|&gt;</span><span class="tok-prosody">&lt;|prosody:speed_very_slow|&gt;</span>
+<span class="ln">8</span>ERRE A PILLANATRA EMLEKEZNI FOGOK.</div>
+      </div>
+      <div class="control-panel">
+        <div class="cp-section">
+          <div class="cp-section-title">VOICE</div>
+          <div class="cp-section-content">
+            <div class="cp-row">
+              <select><option>THOMAS (5.2s)</option></select>
+            </div>
+          </div>
+        </div>
+        <div class="cp-section">
+          <div class="cp-section-title">EMOTION</div>
+          <div class="cp-section-content">
+            <div class="cp-row"><label>ACTV:</label><span style="color:#9bbc0f;font-weight:bold;">ENTHUSIASM</span></div>
+          </div>
+        </div>
+        <div class="cp-section">
+          <div class="cp-section-title">PROSODY</div>
+          <div class="cp-section-content">
+            <div class="cp-row"><label>SPD:</label><select><option>NORMAL</option></select></div>
+            <div class="cp-row"><label>PCH:</label><select><option>NORMAL</option></select></div>
+            <div class="cp-row"><label>DLV:</label><select><option>NORMAL</option></select></div>
+          </div>
+        </div>
+        <div class="cp-section">
+          <div class="cp-section-title">PREVIEW</div>
+          <div class="cp-section-content">
+            <div class="cp-preview"><span class="tok-emotion">&lt;|emotion:enthusiasm|&gt;</span> FANTASZTIKUS!</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="waveform">
+      <button style="background:var(--bg-raised);border:2px solid var(--border);color:var(--text-primary);font-family:var(--font-mono);font-size:10px;padding:2px 6px;cursor:pointer;">▶</button>
+      <div class="waveform-bars" id="wf-retro"></div>
+      <span style="color:var(--text-secondary);font-size:10px;font-family:var(--font-mono);">4.84s</span>
+    </div>
+    <div class="status-bar" style="font-family:var(--font-mono);">
+      <span style="color:#9bbc0f;">* MODEL: LOADED (bfloat16) | GPU: RTX 5070</span>
+      <span>VOICE: THOMAS | 4.84s / 15.68s RTF=3.24</span>
+    </div>
+  </div>
+</div>
+
+<script>
+// Generate waveform bars
+function genWaveform(containerId, count = 60) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  let html = '';
+  for (let i = 0; i < count; i++) {
+    const h = Math.random() * 80 + 20;
+    html += '<div class="waveform-bar" style="height: ' + h + '%;"></div>';
+  }
+  container.innerHTML = html;
+}
+
+genWaveform('wf-dark');
+genWaveform('wf-light');
+genWaveform('wf-synth');
+genWaveform('wf-retro');
+</script>
+
+</body>
+</html>

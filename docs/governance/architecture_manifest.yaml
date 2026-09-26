@@ -1,0 +1,150 @@
+# SpeechStudio Architecture Manifest
+
+> Single source of truth for the project's high-level architecture.
+> Any code change that alters the layering, ownership, or boundaries
+> described here MUST be reflected in this file via a pull request.
+
+## 1. Project Identity
+
+- **Name**: SpeechStudio
+- **Purpose**: Portable desktop frontend for local Higgs Audio V3 TTS.
+- **Locale**: All processing is local. No cloud, no telemetry.
+- **Stack**: Python 3.10+ / PySide6 / PyTorch / Higgs-Audio-V3-4b.
+
+## 2. Layered Architecture
+
+SpeechStudio follows a strict three-layer architecture.  Each layer may
+only depend on the layer below it; reverse dependencies are forbidden.
+
+```
++-------------------------------------------------------------+
+|  UI Layer (ui/)                                              |
+|  - main_window.py, panels/, theme.py                         |
+|  - Qt widgets + signal/slot wiring                          |
+|  - Never imports torch / transformers / model internals      |
++-------------------------------------------------------------+
+|  Engine Layer (engine/)                                      |
+|  - engine.py (facade), models.py, workers.py, events.py      |
+|  - prompt_builder.py, narration_blocks.py, higgs_tokens.py   |
+|  - preset_manager.py, batch_manager.py                       |
+|  - voice_manager.py, audio_manager.py, model_manager.py      |
+|  - generation_manager.py                                     |
+|  - Pure Python (no Qt imports)                               |
++-------------------------------------------------------------+
+|  External Layer                                              |
+|  - torch, transformers, soundfile, PyYAML                    |
++-------------------------------------------------------------+
+```
+
+### Dependency Rules
+
+| Layer        | May import                                                   | May NOT import                          |
+|--------------|---------------------------------------------------------------|------------------------------------------|
+| UI           | Engine, PySide6, ui.*                                         | torch, transformers, engine internals * |
+| Engine       | External, engine.*                                            | PySide6, ui.*                            |
+| External     | (third-party)                                                 | SpeechStudio modules                     |
+
+\* The UI talks to the Engine through the `Engine` facade only
+(`from engine import Engine`).  It may NOT directly import
+`model_manager`, `audio_manager`, etc., except for read-only data
+classes in `engine.models`.
+
+## 3. Module Ownership
+
+| Module                         | Owns                                        | Depends on (engine)                                  |
+|--------------------------------|----------------------------------------------|------------------------------------------------------|
+| `engine.Engine`                | Lifecycle, request pipeline                  | All managers                                          |
+| `engine.ModelManager`          | Model + tokenizer + CUDA context             | (none)                                                |
+| `engine.GenerationManager`     | Single generation execution                  | ModelManager, AudioManager                            |
+| `engine.AudioManager`          | WAV I/O, playback, silence, normalisation    | (none)                                                |
+| `engine.VoiceManager`          | Voice profile CRUD + reference audio         | (none)                                                |
+| `engine.PromptBuilder`         | Higgs token construction (single source)     | higgs_tokens, narration_blocks, models               |
+| `engine.NarrationBlockManager` | Block model + auto-detect + overrides        | narration_blocks                                      |
+| `engine.PromptOptimizer`       | Block -> effective state -> token emissions  | narration_blocks                                      |
+| `engine.PresetManager`         | Preset persistence (YAML/JSON)               | models                                                |
+| `engine.BatchManager`          | Batch queue + retry + pacing                 | models                                                |
+| `engine.WorkerPool`            | Background + generation threads              | events                                                |
+
+## 4. Concurrency Model
+
+| Thread            | Responsibility                                     |
+|-------------------|----------------------------------------------------|
+| UI thread         | All Qt widget manipulation, user input            |
+| Generation thread | `model.generate_speech()` calls (one at a time)   |
+| Background thread | Model load, history writes, file indexing         |
+| Playback thread   | Audio playback (sounddevice / simpleaudio)        |
+
+**UI thread crossing rule**: worker threads emit `Signal`s or schedule
+work via `QTimer.singleShot(0, fn)` from the UI thread's event loop.
+`QTimer.singleShot` does NOT cross threads when called from a worker
+thread with a bare lambda; the BatchManager therefore accepts a
+`marshal_to_ui` callable that the UI side sets to
+`lambda fn: QTimer.singleShot(0, fn)` (called from the UI thread).
+
+## 5. Persistence Layout
+
+```
+SpeechStudio/
+├── settings/
+│   ├── settings.json          # UI + engine settings
+│   ├── history/               # Generation history (JSON entries)
+│   └── presets/               # Preset YAML/JSON files
+├── outputs/                   # Generated WAV files (timestamped)
+├── voices/                    # Voice profiles (one folder each)
+├── logs/                      # engine.log, errors.log, generation.log, ...
+└── models/higgs-audio-v3/     # Model weights (downloaded by bootstrap)
+```
+
+## 6. Token Construction (Single Responsibility)
+
+`PromptBuilder` is the **only** module permitted to call `make_token()`
+or construct Higgs token syntax (`<|category:tag|>`).  This is enforced
+by:
+
+1. `engine.higgs_tokens.make_token` is the only token constructor.
+2. No UI module imports `make_token` or `higgs_tokens` token constants
+   for construction purposes (only for display lookups like `EMOTIONS`).
+3. `Engine._execute_generation` always trusts `request.text` as the
+   final prompt (no `"<|"` heuristic).
+
+## 7. Pipeline Verification (SHA-256)
+
+To detect silent prompt corruption between layers, each stage of the
+generation pipeline logs the SHA-256 of the prompt it received:
+
+| Stage | Location                                              |
+|-------|-------------------------------------------------------|
+| 1     | `MainWindow._update_prompt_preview` (UI)             |
+| 2     | `MainWindow._start_generation` (UI -> Engine)        |
+| 3     | `Engine._execute_generation` (Engine receives)       |
+| 4/5   | `GenerationManager.generate` (Engine -> Model)       |
+
+The hash should be identical across all four stages for a given
+generation.  Divergence indicates a bug.
+
+## 8. Verification Tools
+
+The `tools/` directory contains architecture verification scripts that
+MUST pass before any release:
+
+- `verify_architecture.py` — checks the dependency rules in section 2.
+- `verify_compile.py` — compiles every Python file.
+- `verify_feature_gate.py` — verifies that experimental features are
+  gated behind the proper flag.
+- `verify_integration.py` — runs a tiny end-to-end smoke test.
+
+## 9. Change Management
+
+Any change that touches:
+
+- The layered architecture (section 2),
+- Module ownership (section 3),
+- The concurrency model (section 4),
+- The persistence layout (section 5),
+- The token construction rule (section 6),
+
+must be accompanied by:
+
+1. An update to this manifest.
+2. An Architecture Decision Record (ADR) in `docs/adr/`.
+3. A passing run of all `tools/verify_*.py` scripts.

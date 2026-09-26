@@ -1,0 +1,73 @@
+# SpeechStudio Capability Matrix
+
+> Cross-reference of features (rows) against capabilities (columns).
+> A "Y" means the feature fully provides the capability; a "P" means
+> partial; a blank cell means "not provided".
+
+## Capabilities
+
+| Capability           | Description                                                |
+|----------------------|------------------------------------------------------------|
+| gen-plain            | Generate from plain text                                   |
+| gen-tokens           | Generate from a prompt containing Higgs tokens             |
+| gen-blocks           | Generate from a block-structured prompt                    |
+| gen-raw              | Generate the literal editor text without re-building       |
+| voice-clone          | Use a reference audio sample for voice cloning             |
+| batch                | Run multiple generations sequentially                      |
+| preset-apply         | Apply a saved preset to the control panel                  |
+| preset-persist       | Save presets to disk (YAML/JSON)                           |
+| preset-import-export | Import/export preset files                                 |
+| pipeline-verify      | SHA-256 logging at every pipeline stage                    |
+| line-numbers         | Editor shows line numbers                                  |
+| syntax-highlight     | Editor highlights Higgs tokens                             |
+| bracket-match        | Editor highlights matching brackets                        |
+| search-replace       | Editor has a find/replace bar                              |
+| inheritance-banner   | Control panel shows the active inheritance source          |
+
+## Feature -> Capability Matrix
+
+| Feature ID | Feature name            | gen-plain | gen-tokens | gen-blocks | gen-raw | voice-clone | batch | preset-apply | preset-persist | preset-import-export | pipeline-verify | line-numbers | syntax-highlight | bracket-match | search-replace | inheritance-banner |
+|------------|-------------------------|-----------|------------|------------|---------|-------------|-------|--------------|----------------|----------------------|------------------|--------------|------------------|---------------|----------------|--------------------|
+| F-001      | Plain-text prompt       | Y         |            |            |         |             |       |              |                |                      |                  |              |                  |               |                |                    |
+| F-006      | Voice cloning           |           |            |            |         | Y           |       |              |                |                      |                  |              |                  |               |                |                    |
+| F-101      | Plain text mode         | Y         |            |            |         |             |       |              |                |                      |                  |              |                  |               |                |                    |
+| F-102      | Narration blocks mode   |           | Y          | Y          |         |             |       |              |                |                      |                  |              |                  |               |                |                    |
+| F-104      | Raw mode                |           | Y          |            | Y       |             |       |              |                |                      |                  |              |                  |               |                |                    |
+| F-105      | Search/replace bar      |           |            |            |         |             |       |              |                |                      |                  |              |                  |               | Y              |                    |
+| F-106      | Line numbers            |           |            |            |         |             |       |              |                |                      |                  | Y            |                  |               |                |                    |
+| F-107      | Bracket matching        |           |            |            |         |             |       |              |                |                      |                  |              |                  | Y             |                |                    |
+| F-108      | Higgs syntax highlight  |           |            |            |         |             |       |              |                |                      |                  |              | Y                |               |                |                    |
+| F-209      | Inheritance banner      |           |            |            |         |             |       |              |                |                      |                  |              |                  |               |                | Y                  |
+| F-301..308 | Preset system           |           |            |            |         |             |       | Y            | Y              | Y                    |                  |              |                  |               |                |                    |
+| F-401..410 | Batch generation        |           | Y          | Y          | Y       | Y           | Y     |              |                |                      |                  |              |                  |               |                |                    |
+| F-801..804 | Pipeline verification   |           |            |            |         |             |       |              |                |                      | Y                |              |                  |               |                |                    |
+
+## Layer -> Capability Coverage
+
+| Layer  | Capabilities fully provided                                       |
+|--------|-------------------------------------------------------------------|
+| UI     | gen-plain, gen-tokens, gen-blocks, gen-raw, line-numbers,         |
+|        | syntax-highlight, bracket-match, search-replace,                  |
+|        | inheritance-banner, preset-apply (UI side), batch (UI side)       |
+| Engine | voice-clone, batch (engine side), preset-persist,                 |
+|        | preset-import-export, pipeline-verify                             |
+
+## Capability Gaps
+
+| Capability            | Gap description                                                  |
+|-----------------------|------------------------------------------------------------------|
+| (none currently)      | All capabilities are covered by at least one feature.            |
+
+## Test Coverage
+
+| Capability           | Manual test path                                            | Automated test          |
+|----------------------|-------------------------------------------------------------|-------------------------|
+| gen-plain            | Type text -> Generate -> WAV produced                       | tools/verify_integration|
+| gen-tokens           | Use PromptBuilder -> Generate                               | tools/verify_integration|
+| gen-blocks           | Switch to Narration Blocks -> Generate                      | (manual)                |
+| gen-raw              | Toggle Raw Mode -> Generate                                 | (manual)                |
+| voice-clone          | Import WAV -> select voice -> Generate                      | (manual)                |
+| batch                | Tools -> Batch Generation -> add jobs -> Start              | (manual)                |
+| preset-apply         | Sidebar -> Presets -> double-click                          | (manual)                |
+| preset-persist       | Save preset -> restart app -> preset still listed           | tools/verify_integration|
+| pipeline-verify      | Generate -> inspect logs/engine.log for SHA-256 lines       | tools/verify_integration|

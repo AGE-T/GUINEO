@@ -1,0 +1,124 @@
+# SpeechStudio Feature Registry
+
+> Authoritative list of features that ship in SpeechStudio.  Each
+> feature has a stable ID, an owning layer, a status, and a gate
+> (the condition under which it is enabled).  Features NOT listed
+> here are not part of the product and MUST NOT be exposed in the UI.
+
+## Status Values
+
+- **planned**  : On the roadmap, not yet implemented.
+- **experimental** : Implemented behind a feature gate; not enabled by default.
+- **beta**     : Implemented and enabled by default; subject to change.
+- **stable**   : Implemented, enabled, and frozen (changes require an ADR).
+- **deprecated**: Still ships but scheduled for removal.
+- **removed**  : No longer ships; entry kept for historical context.
+
+## Feature List
+
+### Core Generation
+
+| ID    | Name                  | Layer  | Status   | Gate              |
+|-------|-----------------------|--------|----------|-------------------|
+| F-001 | Plain-text prompt     | UI     | stable   | always            |
+| F-002 | Emotion tokens (21)   | engine | stable   | always            |
+| F-003 | Style tokens (3)      | engine | stable   | always            |
+| F-004 | Prosody tokens        | engine | stable   | always            |
+| F-005 | SFX tokens            | engine | stable   | always            |
+| F-006 | Voice cloning         | engine | stable   | reference audio   |
+| F-007 | Output silence pad    | engine | stable   | always            |
+| F-008 | LUFS normalisation    | engine | stable   | checkbox          |
+
+### Narration Editor
+
+| ID    | Name                  | Layer  | Status   | Gate              |
+|-------|-----------------------|--------|----------|-------------------|
+| F-101 | Plain text mode       | UI     | stable   | always            |
+| F-102 | Narration blocks mode | UI     | beta     | always            |
+| F-103 | Preview mode          | UI     | stable   | always            |
+| F-104 | Raw mode (literal)    | UI     | beta     | Raw Mode checkbox |
+| F-105 | Search/replace bar    | UI     | stable   | Ctrl+F            |
+| F-106 | Line numbers          | UI     | stable   | always            |
+| F-107 | Bracket matching      | UI     | stable   | always            |
+| F-108 | Higgs syntax highlight| UI     | stable   | always            |
+
+### Control Panel
+
+| ID    | Name                  | Layer  | Status   | Gate              |
+|-------|-----------------------|--------|----------|-------------------|
+| F-201 | Voice section         | UI     | stable   | always            |
+| F-202 | Emotion buttons       | UI     | stable   | always            |
+| F-203 | Style buttons         | UI     | stable   | always            |
+| F-204 | Prosody section       | UI     | stable   | always            |
+| F-205 | SFX section           | UI     | stable   | always            |
+| F-206 | Generation parameters | UI     | stable   | always            |
+| F-207 | Reference audio panel | UI     | stable   | always            |
+| F-208 | Prompt preview        | UI     | stable   | always            |
+| F-209 | Inheritance banner    | UI     | beta     | always            |
+| F-210 | Batch update context  | UI     | stable   | internal          |
+
+### Presets
+
+| ID    | Name                  | Layer  | Status   | Gate              |
+|-------|-----------------------|--------|----------|-------------------|
+| F-301 | Save preset           | engine | beta     | always            |
+| F-302 | Apply preset          | engine | beta     | always            |
+| F-303 | Delete preset         | engine | beta     | always            |
+| F-304 | Rename preset         | engine | beta     | always            |
+| F-305 | Import preset (file)  | engine | beta     | File menu         |
+| F-306 | Export preset (file)  | engine | beta     | File menu         |
+| F-307 | YAML persistence      | engine | beta     | always            |
+| F-308 | JSON fallback         | engine | beta     | no PyYAML         |
+
+### Batch Generation
+
+| ID    | Name                  | Layer  | Status   | Gate              |
+|-------|-----------------------|--------|----------|-------------------|
+| F-401 | Job queue             | engine | beta     | Tools menu        |
+| F-402 | Add/edit/remove jobs  | UI     | beta     | Tools menu        |
+| F-403 | Move/duplicate jobs   | UI     | beta     | Tools menu        |
+| F-404 | Save/load queue (YAML)| engine | beta     | Tools menu        |
+| F-405 | Start/pause/stop      | UI     | beta     | Tools menu        |
+| F-406 | Retry on busy         | engine | beta     | always            |
+| F-407 | Inter-job delay 250ms | engine | beta     | always            |
+| F-408 | Per-job seed          | UI     | beta     | Job edit dialog   |
+| F-409 | Per-job output name   | UI     | beta     | Job edit dialog   |
+| F-410 | Job duration = audio  | engine | beta     | always            |
+
+### Voice Library
+
+| ID    | Name                  | Layer  | Status   | Gate              |
+|-------|-----------------------|--------|----------|-------------------|
+| F-501 | List voices           | UI     | stable   | always            |
+| F-502 | Create voice          | engine | stable   | always            |
+| F-503 | Import reference WAV  | engine | stable   | always            |
+| F-504 | Edit transcript       | engine | stable   | always            |
+| F-505 | Delete voice          | engine | stable   | always            |
+| F-506 | Export voice          | engine | stable   | always            |
+
+### History
+
+| ID    | Name                  | Layer  | Status   | Gate              |
+|-------|-----------------------|--------|----------|-------------------|
+| F-601 | List history          | UI     | stable   | always            |
+| F-602 | Reuse settings        | UI     | stable   | always            |
+| F-603 | Delete entry          | engine | stable   | always            |
+| F-604 | Export entry (JSON)   | engine | stable   | always            |
+
+### Tools
+
+| ID    | Name                  | Layer  | Status   | Gate              |
+|-------|-----------------------|--------|----------|-------------------|
+| F-701 | Benchmark dialog      | UI     | beta     | Tools menu        |
+| F-702 | Settings dialog       | UI     | stable   | Tools menu        |
+| F-703 | Developer mode        | UI     | beta     | Tools menu        |
+| F-704 | Open output folder    | UI     | stable   | Tools menu        |
+
+### Pipeline Verification
+
+| ID    | Name                  | Layer  | Status   | Gate              |
+|-------|-----------------------|--------|----------|-------------------|
+| F-801 | Stage 1 SHA-256 (UI)  | UI     | beta     | always            |
+| F-802 | Stage 2 SHA-256 (UI)  | UI     | beta     | always            |
+| F-803 | Stage 3 SHA-256 (Eng) | engine | beta     | always            |
+| F-804 | Stage 4/5 SHA-256(GM) | engine | beta     | always            |

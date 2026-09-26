@@ -1,0 +1,61 @@
+# SpeechStudio .gitignore
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# --- Pytest / coverage ---
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# --- SpeechStudio runtime artifacts ---
+# Generated audio outputs (regenerable)
+outputs/*.wav
+
+# Model weights (huge; downloaded by bootstrap)
+models/higgs-audio-v3/*.safetensors
+models/higgs-audio-v3/*.bin
+models/higgs-audio-v3/*.pt
+models/higgs-audio-v3/*.onnx
+
+# Logs (regenerable)
+logs/*.log
+
+# User-specific settings (keep the directory, ignore the contents)
+settings/*.json
+settings/history/*.json
+settings/presets/*.yaml
+settings/presets/*.yml
+settings/presets/*.json
+
+# Voice reference audio is kept (it's user content) but transient
+# uploads go to /tmp.
+
+# --- Original spec PDFs are checked in but the converted .md versions
+# are derived - keep both for now.
+
+# --- Build reports are checked in (they're historical records).

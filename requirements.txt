@@ -1,0 +1,58 @@
+# SpeechStudio - Python dependencies
+# -----------------------------------------------
+# Installed automatically by bootstrap.py into the
+# project local virtual environment (venv/).
+#
+# The application is portable. No global packages are used.
+# Only the technologies approved by the specification are listed.
+#
+# Approved stack (REFERENCES.md section 17, AI Development Rules section 3):
+#   Python, PyTorch, Transformers, Hugging Face Hub,
+#   PySide6, SoundFile, NumPy
+#
+# No additional frameworks may be introduced without explicit approval.
+#
+# NOTE on torch:
+#   torch is intentionally NOT listed here. bootstrap.py installs the
+#   CUDA-enabled PyTorch build separately using the official PyTorch CUDA
+#   wheel index (https://download.pytorch.org/whl/cuXXX) when a CUDA GPU is
+#   detected, so that the correct CUDA runtime is bundled on Windows.
+#   See bootstrap.py :: ensure_torch() for the implementation.
+
+# --- Model library ---
+# Transformers loads the Higgs Audio V3 model with trust_remote_code=True.
+# The model ships custom modelling code (modeling_higgs_multimodal_qwen3.py).
+#
+# The Transformers port (multimodalart/higgs-audio-v3-tts-4b-transformers)
+# explicitly requires "transformers >= 5.5" (see research/multimodalart_transformers_port_README.md).
+# We pin to the 5.x series; the 6.x series is excluded until verified against
+# the model's custom code.
+transformers>=5.5.0,<6.0.0
+
+# --- Hugging Face Hub ---
+# Used by bootstrap to download and validate the model and tokenizer
+# into the project local cache (.cache/huggingface/).
+#
+# NOTE on hf-xet: huggingface_hub pulls in hf-xet as a dependency by default.
+# hf-xet uses a proprietary download protocol that fails on many Windows
+# configurations and behind firewalls. bootstrap.py and SpeechStudio.py both
+# set HF_HUB_DISABLE_XET=1 at startup to force regular HTTPS download, which
+# works reliably everywhere. The env var is sufficient; no version pin needed.
+huggingface_hub>=0.24.0
+
+# --- Audio I/O ---
+# SoundFile reads and writes WAV files for reference voices and outputs.
+soundfile>=0.12.1
+
+# --- Audio playback ---
+# Used by AudioManager.play() for in-app audio playback.
+# If not installed, playback is skipped gracefully.
+sounddevice>=0.4.6
+
+# --- Numerical computation ---
+# NumPy handles waveform arrays and audio post-processing.
+numpy>=1.26.0
+
+# --- Graphical user interface ---
+# PySide6 (Qt for Python) provides the complete desktop interface.
+PySide6>=6.7.0

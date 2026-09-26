@@ -1,0 +1,390 @@
+version: 1
+
+jobs:
+
+# ============================================================
+# TESZT 1 — Alap szöveg, hangklónozás, baseline
+# ============================================================
+- name: "T1 - Baseline (klón, nincs token)"
+  prompt: |
+    Szia! Ez egy rövid teszt mondat, amivel ellenőrzöm a hangklónozás minőségét.
+    A cél az, hogy hallható legyen a természetes beszédritmus és a magyar kiejtés.
+  voice_id: null
+  output_filename: t01_baseline.wav
+  parameters:
+    temperature: 1.2
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+# ============================================================
+# TESZT 2 — Egyetlen emotion (a leglátványosabbak)
+# ============================================================
+- name: "T2a - Anger"
+  prompt: |
+    <|emotion:anger|>Hogy merészelsz ilyet mondani?! Ez teljesen elfogadhatatlan!
+  voice_id: null
+  output_filename: t02a_anger.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+- name: "T2b - Sadness"
+  prompt: |
+    <|emotion:sadness|>Már nem bírom tovább. Minden erőm elhagyott, és nem látok kiutat ebből a sötétségből.
+  voice_id: null
+  output_filename: t02b_sadness.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+- name: "T2c - Enthusiasm"
+  prompt: |
+    <|emotion:enthusiasm|>Fantasztikus hírem van! Sikerült, végre minden összeállt, és indulhat a projekt!
+  voice_id: null
+  output_filename: t02c_enthusiasm.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+- name: "T2d - Fear"
+  prompt: |
+    <|emotion:fear|>Mi volt az? Hallod te is? Valami van a sötétben, és egyre közeledik felénk.
+  voice_id: null
+  output_filename: t02d_fear.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+# ============================================================
+# TESZT 3 — Style tokenek
+# ============================================================
+- name: "T3a - Whispering"
+  prompt: |
+    <|style:whispering|>Gyere közelebb, mert valami fontosat akarok mondani, de nem hallhatja más.
+  voice_id: null
+  output_filename: t03a_whisper.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+- name: "T3b - Shouting"
+  prompt: |
+    <|style:shouting|>Mindnyájan figyeljetek rám most azonnal! Ez nagyon fontos, ne hagyjátok ki!
+  voice_id: null
+  output_filename: t03b_shout.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+# ============================================================
+# TESZT 4 — Prosody: speed
+# ============================================================
+- name: "T4a - Speed very slow"
+  prompt: |
+    <|prosody:speed_very_slow|>Lassan... nagyon lassan... haladok előre az úton, és minden lépés nehezen jön.
+  voice_id: null
+  output_filename: t04a_slow.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+- name: "T4b - Speed very fast"
+  prompt: |
+    <|prosody:speed_very_fast|>Gyerünkgyerünk nincs idő magyarázni indulnunk kell azonnal minden készen áll!
+  voice_id: null
+  output_filename: t04b_fast.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+# ============================================================
+# TESZT 5 — Prosody: pitch
+# ============================================================
+- name: "T5a - Pitch low"
+  prompt: |
+    <|prosody:pitch_low|>Ez egy mély, nyugodt hang, amely lassan és megfontoltan szólal meg.
+  voice_id: null
+  output_filename: t05a_pitch_low.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+- name: "T5b - Pitch high"
+  prompt: |
+    <|prosody:pitch_high|>Ez egy magas, élénk hang, amely izgatottan és hangosan beszél!
+  voice_id: null
+  output_filename: t05b_pitch_high.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+# ============================================================
+# TESZT 6 — Delivery (expressive)
+# ============================================================
+- name: "T6a - Expressive high"
+  prompt: |
+    <|prosody:expressive_high|>Képzeljék el, tegnap este, amikor megláttam azt a gyönyörű naplementét a tenger felett, egyszerűen elállt a szavam!
+  voice_id: null
+  output_filename: t06a_expr_high.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+- name: "T6b - Expressive low"
+  prompt: |
+    <|prosody:expressive_low|>A jelentés szerint a hőmérséklet holnap délután huszonkét fok várható, enyhe széllel délről.
+  voice_id: null
+  output_filename: t06b_expr_low.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+# ============================================================
+# TESZT 7 — KOMBINÁLT tokenek (2 token / mondat)
+# ============================================================
+- name: "T7a - Anger + Shouting"
+  prompt: |
+    <|emotion:anger|><|style:shouting|>Hogy merészelsz ilyet mondani?! Azonnal hagyd abban!
+  voice_id: null
+  output_filename: t07a_anger_shout.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+- name: "T7b - Sadness + Whispering"
+  prompt: |
+    <|emotion:sadness|><|style:whispering|>Már nem bírom tovább... minden erőm elhagyott...
+  voice_id: null
+  output_filename: t07b_sad_whisper.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+- name: "T7c - Enthusiasm + Speed fast"
+  prompt: |
+    <|emotion:enthusiasm|><|prosody:speed_fast|>Gyerünk induljunk, ez egy csodálatos nap és rengeteg dolgunk van!
+  voice_id: null
+  output_filename: t07c_enthu_fast.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+- name: "T7d - Fear + Pitch high + Expressive high"
+  prompt: |
+    <|emotion:fear|><|prosody:pitch_high|><|prosody:expressive_high|>Segítség! Valami van a sötétben, és egyre közeledik!
+  voice_id: null
+  output_filename: t07d_fear_high.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+# ============================================================
+# TESZT 8 — Emotion váltás egy szövegen belül
+# ============================================================
+- name: "T8 - Emotion váltás (3 mondat)"
+  prompt: |
+    <|emotion:contentment|>Ez egy nyugodt, békés délután volt a kertben.
+
+    <|emotion:anger|>Aztán hirtelen minden tönkrement, és dühös lettem.
+
+    <|emotion:relief|>Végül minden megoldódott, és újra megkönnyebbültem.
+  voice_id: null
+  output_filename: t08_emotion_switch.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+# ============================================================
+# TESZT 9 — SFX (hang effektek)
+# ============================================================
+- name: "T9a - Laughter"
+  prompt: |
+    <|emotion:amusement|><|sfx:laughter|>Haha, ezt nem hiszem el, ez tényleg megtörtént!
+  voice_id: null
+  output_filename: t09a_laughter.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+- name: "T9b - Sigh"
+  prompt: |
+    <|emotion:bitterness|><|sfx:sigh|>Haa, megint elrontottam, pedig olyan közel voltam a sikerhez.
+  voice_id: null
+  output_filename: t09b_sigh.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: null
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+# ============================================================
+# TESZT 10 — Seed reproducibility
+# ============================================================
+- name: "T10a - Seed 42 (első)"
+  prompt: |
+    <|emotion:elation|>Ez egy teszt a seed reprodukálhatóságával. Ugyanazt a hangot kell hallanod, mint a következő fájlban.
+  voice_id: null
+  output_filename: t10a_seed42_a.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: 42
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
+
+- name: "T10b - Seed 42 (második)"
+  prompt: |
+    <|emotion:elation|>Ez egy teszt a seed reprodukálhatóságával. Ugyanazt a hangot kell hallanod, mint az előző fájlban.
+  voice_id: null
+  output_filename: t10b_seed42_b.wav
+  parameters:
+    temperature: 1.3
+    top_p: 0.95
+    top_k: 300
+    max_new_tokens: 4096
+    seed: 42
+    append_silence: 0.5
+    normalize_output: false
+    auto_play: false
+    output_format: wav
