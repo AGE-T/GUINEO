@@ -22,6 +22,11 @@ from engine.narration_blocks import PromptBlock
 from engine.models import GenerationParameters
 from engine.prompt_optimizer import PromptOptimizer
 from engine.prompt_builder import PromptBuilder
+from engine.sentence_boundaries import (
+    INLINE_MARKER_RE as _SHARED_INLINE_MARKER_RE,
+    split_sentence_units as _split_units,
+    split_sentences as _split_sentence_texts,
+)
 from engine.logger import get_logger
 
 logger = get_logger("narration_splitter")
@@ -81,16 +86,19 @@ class NarrationSplitter:
     MAX_CHARS = 400
     MIN_CHARS = 50  # don't create parts shorter than this unless at end
 
-    # Sentence-ending punctuation (followed by space or end)
-    SENTENCE_END_RE = re.compile(r'(?<=[.!?…])\s+')
+    # P3.44.2/P3.44.8: any inline marker (SFX / pause). Aliased to the
+    # single authoritative regex in engine.sentence_boundaries (kept as
+    # a class attribute for backward compatibility with callers/tests
+    # that reference NarrationSplitter._INLINE_MARKER_RE). Used to
+    # shield marker contents from punctuation detection and to attach a
+    # marker that directly follows sentence punctuation to the sentence
+    # it annotates (no whitespace required — e.g. "???{sfx:Laughter:Haha}").
+    _INLINE_MARKER_RE = _SHARED_INLINE_MARKER_RE
 
-    # P3.44.2: any inline marker (SFX / pause). Used to shield marker
-    # contents from punctuation detection and to attach a marker that
-    # directly follows sentence punctuation to the sentence it annotates
-    # (no whitespace required — e.g. "???{sfx:Laughter:Haha}").
-    _INLINE_MARKER_RE = re.compile(
-        r"\{sfx:[^:}]+:[^}]+\}|\{pause\}|\{long_pause\}")
-    _PUNCT_RUN_RE = re.compile(r"[.!?…]+")
+    # NOTE (P3.44.8): the sentence-boundary rules themselves (including
+    # SENTENCE_END_RE / _PUNCT_RUN_RE, retired here) moved to
+    # engine.sentence_boundaries — the ONE authoritative scanner shared
+    # by NarrationSplitter, BlockDetector and PromptBuilder.
 
     # Speaker declaration: a line that is EXACTLY "$SPEAKER:" (dollar sign,
     # uppercase identifier, colon, optional trailing whitespace, nothing else).
@@ -489,8 +497,8 @@ class NarrationSplitter:
         """
         parts: List[SplitPart] = []
 
-        sentences = self._split_sentences(text)
-        groups = self._group_sentences(sentences)
+        units = self._split_sentence_units(text)
+        groups = self._group_sentence_units(units)
 
         for group_text in groups:
             est_duration = len(group_text) / 15.0
@@ -540,8 +548,8 @@ class NarrationSplitter:
                 groups = [block_text]
             else:
                 # Block is too long — split into sentence groups.
-                sentences = self._split_sentences(block_text)
-                groups = self._group_sentences(sentences)
+                units = self._split_sentence_units(block_text)
+                groups = self._group_sentence_units(units)
 
             # P3.15: Track how many Parts this Block produces for the
             # part_of_block / total_parts_in_block display.
@@ -615,8 +623,8 @@ class NarrationSplitter:
         # builder no longer needed — canonical compiler is used directly
         parts: List[SplitPart] = []
 
-        sentences = self._split_sentences(text)
-        groups = self._group_sentences(sentences)
+        units = self._split_sentence_units(text)
+        groups = self._group_sentence_units(units)
 
         for group_text in groups:
             from engine.prompt_state import CanonicalPromptCompiler
@@ -647,12 +655,26 @@ class NarrationSplitter:
     # ------------------------------------------------------------------
     # Sentence splitting
     # ------------------------------------------------------------------
+    def _split_sentence_units(self, text: str) -> List[tuple]:
+        """Split ``text`` into exact ``(sentence, separator)`` units.
+
+        Delegates to the single authoritative boundary scanner
+        (engine.sentence_boundaries — P3.44.8).  The separator is the
+        ORIGINAL whitespace run between two sentences, so grouping can
+        reconstruct part text byte-exactly (never " ".join).
+        """
+        return _split_units(text)
+
     def _split_sentences(self, text: str) -> List[str]:
-        """Split text into sentences at . ! ? … boundaries.
+        """Split text into sentences — EXACT source slices.
 
-        Never cuts inside a sentence. Preserves the punctuation.
+        Never cuts inside a sentence (a period glued to a digit/letter —
+        "3.14", "v1.2", "test.hu", "U.S.A." — is not a boundary) and
+        never mutates the text (each sentence is a slice, not a
+        reconstruction).
 
-        P3.44.2 — SFX/pause marker awareness (two rules):
+        P3.44.2 — SFX/pause marker awareness (unchanged, now enforced by
+        the shared scanner):
           1. SHIELDING: punctuation INSIDE an inline marker (e.g. the "!" in
              ``{sfx:Laughter:Ha!ha}``) is part of the onomatopoeia, never a
              sentence boundary — a marker is never cut in half.
@@ -666,100 +688,88 @@ class NarrationSplitter:
              (SFX placement moved relative to the Preview prompt, which
              keeps it right after the punctuation).
         """
-        text = text.strip()
-        if not text:
-            return []
-
-        marker_spans = [(m.start(), m.end())
-                        for m in self._INLINE_MARKER_RE.finditer(text)]
-
-        def _marker_at(pos: int):
-            for s, e in marker_spans:
-                if s == pos:
-                    return e
-            return None
-
-        # Sentence end positions (exclusive) in ascending order.
-        cuts: List[int] = []
-        for m in self._PUNCT_RUN_RE.finditer(text):
-            # Rule 1 — skip punctuation inside a marker (shielded).
-            if any(s <= m.start() < e for s, e in marker_spans):
-                continue
-            end = m.end()
-            # Rule 2 — attach a following marker chain (optional
-            # whitespace between punctuation/markers, markers contiguous).
-            while end < len(text):
-                j = end
-                while j < len(text) and text[j] in " \t":
-                    j += 1
-                mk_end = _marker_at(j) if j < len(text) else None
-                if mk_end is None:
-                    break
-                end = mk_end
-            cuts.append(end)
-
-        sentences: List[str] = []
-        pos = 0
-        for cut in cuts:
-            seg = text[pos:cut].strip()
-            if seg:
-                sentences.append(seg)
-            pos = cut
-        tail = text[pos:].strip()
-        if tail:
-            sentences.append(tail)
-        return sentences
+        return _split_sentence_texts(text)
 
     # ------------------------------------------------------------------
     # Group sentences into parts
     # ------------------------------------------------------------------
-    def _group_sentences(self, sentences: List[str]) -> List[str]:
-        """Group sentences into parts of ~TARGET_SENTENCES or ~MAX_CHARS.
+    def _group_sentence_units(self, units: List[tuple]) -> List[str]:
+        """Group ``(sentence, separator)`` units into parts of
+        ~TARGET_SENTENCES or ~MAX_CHARS.
 
-        Rules:
+        P3.44.8 — EXACT-TEXT PRESERVATION: sentences joined into one
+        part are joined with their ORIGINAL separators
+        (``sentence_i + sep_i + sentence_{i+1}``), never
+        ``" ".join(...)``.  The old join INSERTED a space inside
+        tokens the broken boundary rule had split ("A GLM 5.2-t
+        használtam." -> "A GLM 5. 2-t használtam.") and silently
+        normalised newlines/multiple spaces to single spaces.  A
+        separator is only consumed when the sentence AFTER it joins the
+        same part; at a part boundary the separator is the split point
+        and is dropped (as before).
+
+        Rules (unchanged):
         - Accumulate sentences until target reached
         - If a single sentence exceeds MAX_CHARS, it gets its own part
         - Never cut inside a sentence
         - Don't create parts shorter than MIN_CHARS unless it's the last
         """
-        if not sentences:
+        if not units:
             return []
 
         groups: List[str] = []
-        current: List[str] = []
-        current_chars = 0
+        current: List[tuple] = []
+        current_chars = 0   # length of the exact joined text so far
 
-        for sentence in sentences:
+        for sentence, sep in units:
             sent_chars = len(sentence)
 
             # If this single sentence is very long, give it its own part
             if sent_chars > self.MAX_CHARS:
                 # First flush current group
                 if current:
-                    groups.append(" ".join(current))
+                    groups.append(self._join_units(current))
                     current = []
                     current_chars = 0
                 groups.append(sentence)
                 continue
 
+            # Separator that would join this sentence to the current
+            # group (the ORIGINAL whitespace — length-aware accounting
+            # replaces the old "+1 for space" approximation).
+            join_sep_len = len(current[-1][1]) if current else 0
+
             # Check if adding this sentence would exceed MAX_CHARS
-            if current_chars + sent_chars > self.MAX_CHARS and current:
+            if current and current_chars + join_sep_len + sent_chars > self.MAX_CHARS:
                 # Flush current group
-                groups.append(" ".join(current))
+                groups.append(self._join_units(current))
                 current = []
                 current_chars = 0
+                join_sep_len = 0
 
-            current.append(sentence)
-            current_chars += sent_chars + 1  # +1 for space
+            current.append((sentence, sep))
+            current_chars += join_sep_len + sent_chars
 
             # Check if we've reached the target sentence count
             if len(current) >= self.TARGET_SENTENCES and current_chars >= self.MIN_CHARS:
-                groups.append(" ".join(current))
+                groups.append(self._join_units(current))
                 current = []
                 current_chars = 0
 
         # Flush remaining
         if current:
-            groups.append(" ".join(current))
+            groups.append(self._join_units(current))
 
         return groups
+
+    @staticmethod
+    def _join_units(units: List[tuple]) -> str:
+        """Join units with their ORIGINAL separators (exact text)."""
+        if not units:
+            return ""
+        out = []
+        for i, (sentence, sep) in enumerate(units):
+            out.append(sentence)
+            if i < len(units) - 1:
+                out.append(sep)
+        return "".join(out)

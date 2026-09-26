@@ -9,22 +9,26 @@ other component — the interface is just detect(text) -> List[PromptBlock].
 """
 
 from __future__ import annotations
-import re
 from typing import List
 
 from engine.narration_blocks import PromptBlock
+from engine.sentence_boundaries import (
+    INLINE_MARKER_RE as _INLINE_MARKER_RE,  # noqa: F401 — module-level
+    # alias kept for backward compatibility (single source of truth
+    # lives in engine.sentence_boundaries since P3.44.8).
+    find_sentence_ends,
+)
 from engine.logger import get_logger
 
 logger = get_logger("block_detector")
 
 
-# P3.44.2 — inline SFX/pause markers ({sfx:Name:Onom} / {pause} /
+# P3.44.2/P3.44.8 — inline SFX/pause markers ({sfx:Name:Onom} / {pause} /
 # {long_pause}). Punctuation inside these markers belongs to the
 # onomatopoeia and must never create a sentence boundary; a marker that
 # follows sentence punctuation belongs to the sentence it annotates.
-# Kept in sync with engine.prompt_builder._INLINE_MARKER_RE.
-_INLINE_MARKER_RE = re.compile(
-    r"\{sfx:[^:}]+:[^}]+\}|\{pause\}|\{long_pause\}")
+# Aliased to the single authoritative regex in engine.sentence_boundaries
+# (P3.44.8) so detection and batch splitting CANNOT diverge.
 
 
 _NEW_BLOCK_MARKERS = [
@@ -97,9 +101,17 @@ class HeuristicBlockDetector(BlockDetector):
         Newlines (including paragraph breaks \n\n) are left in the gap
         between sentences so the detector can find them.
 
-        P3.44.2 — SFX/pause marker awareness (consistent with
-        NarrationSplitter._split_sentences so detection and batch
-        splitting agree on sentence semantics):
+        P3.44.8 — boundary detection is delegated to the ONE
+        authoritative scanner (engine.sentence_boundaries.find_sentence_ends)
+        so Re-detect/block boundaries agree with the batch splitter:
+        a period glued to a digit or letter ("3.14", "v1.2",
+        "test.hu", "U.S.A.") is NOT a sentence boundary here either.
+        (Previously this class scanned bare ``[.!?…]+`` runs without the
+        whitespace/context requirement — the same defect class proven
+        in the narration splitter.)
+
+        P3.44.2 — SFX/pause marker awareness (kept, via the shared
+        scanner):
           1. SHIELDING: punctuation inside an inline marker (e.g. the "!"
              in ``{sfx:Laughter:Ha!ha}``) never ends a sentence — a
              marker can never be cut in half by a block boundary.
@@ -110,46 +122,28 @@ class HeuristicBlockDetector(BlockDetector):
              sentence.
         """
         sentences = []
-        pattern = re.compile(r"[.!?…]+")
-        # Inline marker spans ({sfx:Name:Onom} / {pause} / {long_pause}).
-        marker_spans = [(m.start(), m.end())
-                        for m in _INLINE_MARKER_RE.finditer(text)]
-
-        def _marker_at(pos: int):
-            for s, e in marker_spans:
-                if s == pos:
-                    return e
-            return None
+        # Sentence END offsets from the authoritative boundary contract.
+        ends = find_sentence_ends(text)
 
         pos = 0
-        for match in pattern.finditer(text):
-            # Rule 1 — punctuation inside a marker is shielded.
-            if any(s <= match.start() < e for s, e in marker_spans):
-                continue
-            end = match.end()
-            # Rule 2 — attach a following marker chain (optional
-            # whitespace between punctuation and markers).
-            while end < len(text):
-                j = end
-                while j < len(text) and text[j] in " \t\r":
-                    j += 1
-                mk_end = _marker_at(j) if j < len(text) else None
-                if mk_end is None:
-                    break
-                end = mk_end
-            while end < len(text) and text[end] in " \t\r":
-                end += 1
+        for end in ends:
+            # Consume trailing spaces/tabs (NOT newlines) into the
+            # sentence end (historical behaviour: paragraph newlines
+            # stay in the ``between`` gap for _boundary_score).
+            e = end
+            while e < len(text) and text[e] in " \t\r":
+                e += 1
 
-            sentence_text = text[pos:end].strip()
+            sentence_text = text[pos:e].strip()
             if sentence_text:
                 sentences.append({
                     "text": sentence_text,
                     "start": pos,
-                    "end": end,
+                    "end": e,
                 })
             # Skip newlines to find the start of the next sentence,
             # but DON'T include them in this sentence's end offset.
-            next_pos = end
+            next_pos = e
             while next_pos < len(text) and text[next_pos] in "\n":
                 next_pos += 1
             pos = next_pos

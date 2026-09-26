@@ -60,6 +60,10 @@ from engine.higgs_tokens import (
     PAUSE_OPTIONS, SFX_BY_NAME,
 )
 from engine.models import PromptData
+from engine.sentence_boundaries import (
+    INLINE_MARKER_RE as _INLINE_MARKER_RE,
+    split_tokenized_sentences as _split_tokenized_sentences,
+)
 
 logger = get_logger("prompt_builder")
 
@@ -76,8 +80,9 @@ _SFX_MARKER_RE = re.compile(r"\{sfx:([^:}]+):([^}]+)\}")
 # {pause} or {long_pause}
 _PAUSE_MARKER_RE = re.compile(r"\{(pause|long_pause)\}")
 # Any inline marker (SFX or pause) — used for span computation/shielding.
-_INLINE_MARKER_RE = re.compile(
-    r"\{sfx:[^:}]+:[^}]+\}|\{pause\}|\{long_pause\}")
+# P3.44.8: aliased to the single authoritative regex in
+# engine.sentence_boundaries — the former local copy is the same object
+# now, so this module and the splitter/block detector cannot diverge.
 
 
 def materialize_inline_markers(text, sfx_insertions=(), pause_insertions=()):
@@ -385,11 +390,23 @@ class PromptBuilder:
         - Conflicting speed values
         - Conflicting delivery values
         - Duplicate SFX at the same position
+
+        P3.44.8 — sentence boundaries come from the ONE authoritative
+        scanner (engine.sentence_boundaries.split_tokenized_sentences)
+        instead of a third, independent ``(?<=[.!?])\\s+`` split.  The
+        old split (a) did not know about inline markers, so an SFX
+        token compiled from ``. {sfx:...}`` was attributed to the NEXT
+        sentence (detached from the sentence it annotates — the known
+        divergence), and (b) ignored ``…`` boundaries.  The compiled
+        prompt is split with the same contract as the editable text,
+        with ``<|sfx:tag|>Onom`` / ``<|prosody:pause|>`` spans playing
+        the marker role (shielding + attachment).
         """
         warnings: List[str] = []
 
-        # Split into sentences (rough split on . ! ? followed by space or end)
-        sentences = re.split(r'(?<=[.!?])\s+', prompt)
+        # Split into sentences using the authoritative boundary
+        # contract (marker-aware on the COMPILED representation).
+        sentences = _split_tokenized_sentences(prompt)
 
         for i, sentence in enumerate(sentences):
             # Find all tokens in this sentence
