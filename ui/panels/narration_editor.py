@@ -1522,6 +1522,15 @@ class NarrationEditor(QWidget):
         P3.23 (design record §25): any explicit selection (including None)
         resolves an outstanding lost_character_id warning — the user has
         made a decision.
+
+        P3.44.7 — an explicit Character selection (including clearing it)
+        is MANUAL SEMANTIC STATE, exactly like an override combo change
+        (set_override marks the block the same way): it sets
+        ``manually_edited`` so ``has_manual_edits`` recognises it and
+        Re-detect can never take the direct-rebuild branch and silently
+        destroy the assignment. The combo's signals are blocked during
+        programmatic refreshes (_update_properties_panel / set_characters),
+        so this only fires on real user interaction.
         """
         if not self._selected_block_id:
             return
@@ -1529,6 +1538,9 @@ class NarrationEditor(QWidget):
         block = self._block_manager.get_block(self._selected_block_id)
         if block is not None:
             block.character_id = char_id
+            # P3.44.7: a Character assignment alone is user-authored
+            # semantic state — mark the block as manually edited.
+            block.manually_edited = True
             # Explicit user decision → clear the lost warning.
             if getattr(block, "lost_character_id", None):
                 block.lost_character_id = None
@@ -1926,7 +1938,8 @@ class NarrationEditor(QWidget):
         elif result == QMessageBox.StandardButton.Discard:
             reply = QMessageBox.question(
                 self, "Rebuild Everything",
-                "This will discard ALL block overrides, labels, and locks.\n\nContinue?",
+                "This will discard ALL block overrides, Characters, "
+                "SFX/pause insertions, labels, and locks.\n\nContinue?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No)
             if reply == QMessageBox.StandardButton.Yes:

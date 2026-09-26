@@ -13,13 +13,41 @@ stores block metadata (offsets + overrides + labels).
 
 from __future__ import annotations
 from typing import List, Optional, Tuple
+import difflib
 import uuid
 
-from engine.narration_blocks import PromptBlock, NarrationTemplate
+from engine.narration_blocks import (
+    PromptBlock, SfxInsertion, PauseInsertion, NarrationTemplate,
+)
 from engine.block_detector import BlockDetector, HeuristicBlockDetector
 from engine.logger import get_logger
 
 logger = get_logger("narration_block_manager")
+
+
+def _norm_ws(s: str) -> str:
+    """Whitespace-normalised text (P3.44.7 split-coverage comparison)."""
+    return " ".join(s.split())
+
+
+def _relatedness(old_text: str, new_text: str) -> float:
+    """Deterministic relatedness score in [0.0, 1.0] between two texts.
+
+    P3.44.7 — the historical containment ratio (one text inside the
+    other, length ratio) is kept as the primary signal; a difflib
+    SequenceMatcher ratio is added so plain substitution edits ("sat"
+    → "stood"), which break containment ENTIRELY, still measure as
+    related. Pure function of the two texts — fully deterministic.
+    """
+    if not old_text or not new_text:
+        return 0.0
+    containment = 0.0
+    if new_text in old_text or old_text in new_text:
+        containment = min(len(new_text), len(old_text)) / \
+                      max(len(new_text), len(old_text))
+    ratio = difflib.SequenceMatcher(
+        None, old_text, new_text, autojunk=False).ratio()
+    return max(containment, ratio)
 
 
 class NarrationBlockManager:
@@ -75,10 +103,21 @@ class NarrationBlockManager:
         """Rebuild automatic blocks while preserving locked/protected blocks.
 
         Locked blocks remain protected — their overrides, labels, locked
-        state AND character assignment are preserved if their text still
-        exists in the new text (design record §25: "Locked block: preserve
-        Character").
+        state, Character assignment AND SFX/pause insertions are preserved
+        if their text still exists in the new text (design record §25:
+        "Locked block: preserve Character"; P3.44.7 extends the same
+        guarantee to the span-local SFX/pause metadata).
         Automatic (non-locked) blocks are recalculated from scratch.
+
+        P3.44.7 — two preservation upgrades (path-equivalence with
+        ``preserve_overrides``, see docs/design/
+        P3_44_7_REDETECT_SEMANTIC_PRESERVATION.md):
+          1. A locked block whose text was SPLIT into consecutive new
+             blocks (whitespace-normalised coverage) transfers its
+             semantics to every child — the text still exists, in pieces.
+          2. A locked block whose text no longer exists anywhere donates
+             its Character as ``lost_character_id`` to the most related
+             new block — the Character never silently disappears.
 
         Manual or locked state is never destroyed for locked blocks.
         """
@@ -98,43 +137,59 @@ class NarrationBlockManager:
                 if i in used_old:
                     continue
                 if old_text.strip() and new_text.strip() == old_text.strip():
-                    new_block.emotion = old_block.emotion
-                    new_block.style = old_block.style
-                    new_block.speed = old_block.speed
-                    new_block.pitch = old_block.pitch
-                    new_block.delivery = old_block.delivery
-                    new_block.label = old_block.label
-                    new_block.locked = True
-                    new_block.manually_edited = True
-                    # P3.23 (design §25): locked block → Character preserved.
-                    new_block.character_id = old_block.character_id
-                    new_block.lost_character_id = None
+                    # P3.23 (design §25): locked block → Character preserved
+                    # (plus overrides/label/lock and — P3.44.7 — the SFX/pause
+                    # insertions with deterministic offset mapping).
+                    self._transfer_overrides(old_block, new_block,
+                                             old_text, new_text)
                     used_old.add(i)
                     break
+        # P3.44.7 split pass: a locked block split into consecutive new
+        # blocks keeps its semantics on every child. Returns the indices
+        # (into locked_blocks) it additionally consumed.
+        split_consumed = self._apply_split_pass(
+            locked_blocks, used_old, new_blocks, text)
+        consumed = used_old | split_consumed
+        # P3.44.7 lost-Character donation for locked blocks whose text is
+        # gone entirely (same rule as preserve_overrides pass 3).
+        self._donate_lost_characters(
+            [locked_blocks[i] for i in range(len(locked_blocks))
+             if i not in consumed], new_blocks, text)
         self._blocks = new_blocks
         self._last_text = text
 
     def preserve_overrides(self, text: str) -> None:
-        """Re-detect blocks while preserving overrides for matching blocks.
+        """Re-detect blocks while preserving semantic state for matching blocks.
 
-        For each new block, find the best-matching old block (by text
-        similarity). If the match score is >= 80%, the old block's overrides
-        are transferred to the new block.
+        Matching passes (in order; all deterministic):
 
-        One-to-one matching is enforced: each old block can only be matched
-        to one new block. This prevents an old override from being assigned
-        to multiple unrelated new blocks.
+        1. EXACT — stripped text equality, one-to-one. Always transfers.
+        2. SIMILARITY — best one-to-one score among unmatched blocks,
+           threshold >= 80%. The score is ``_relatedness`` (P3.44.7):
+           the historical containment ratio OR a difflib ratio, whichever
+           is larger — so plain substitution edits ("sat" → "stood"),
+           which break containment entirely, still match.
+        3. SPLIT / union coverage (P3.44.7) — when consecutive unmatched
+           new blocks' whitespace-normalised concatenation EQUALS one
+           unmatched old block's text, the old block was genuinely split:
+           block-wide semantics transfer to EVERY child and span-local
+           SFX/pause insertions allocate to the child whose mapped span
+           contains them.
+        4. LOST-CHARACTER — any still-unmatched old block that HAD a
+           Character donates ``lost_character_id`` to the most related
+           new block (warning + re-assignment; never silent loss).
 
-        Matching rules (in priority order):
-        1. Exact text match (score = 100) — always matches.
-        2. Substring match (one is contained in the other) — score = ratio
-           of the shorter to the longer text. Must be >= 80%.
-        3. No match — new block gets defaults.
+        Transfer semantics per field class:
+        - block-wide (emotion/style/speed/pitch/delivery, label, locked,
+          Character): transfer on passes 1-2; on a split, EVERY child.
+        - span-local (sfx/pause insertions, offsets relative to the block
+          text): transfer with deterministic offset mapping; an insertion
+          whose anchor text no longer exists is DROPPED (logged) — it is
+          never guessed onto unrelated text.
 
-        Deleted blocks (old blocks with no match in new blocks) disappear.
-        New blocks (no match in old blocks) get defaults.
-        Changed blocks inherit overrides only if the change is small enough
-        to score >= 80%.
+        Deleted blocks (old blocks with no match) disappear. New blocks
+        (no match) get defaults. Changed blocks inherit only when the
+        relatedness score is sufficient (unambiguous mapping).
 
         P3.23 (design record §25) — Character preservation through Re-detect:
             - Matched (exact or >= 80% similarity) → Character transfers.
@@ -153,7 +208,7 @@ class NarrationBlockManager:
         new_blocks = self._detector.detect(text)
         # Track which old blocks have been consumed (one-to-one matching).
         # This prevents an old block's overrides from being assigned to
-        # multiple new blocks.
+        # multiple unrelated new blocks.
         used_old = set()
         # First pass: exact matches (highest confidence, 1:1).
         for new_block in new_blocks:
@@ -167,10 +222,12 @@ class NarrationBlockManager:
                 if not old_text_stripped:
                     continue
                 if new_text == old_text_stripped:
-                    self._transfer_overrides(old_block, new_block)
+                    self._transfer_overrides(
+                        old_block, new_block, old_text,
+                        text[new_block.start_offset:new_block.end_offset])
                     used_old.add(i)
                     break
-        # Second pass: fuzzy substring matches for remaining new blocks.
+        # Second pass: similarity matches for remaining new blocks.
         # Only unmatched new blocks and unmatched old blocks participate.
         for new_block in new_blocks:
             # Skip if already matched in the first pass.
@@ -187,60 +244,40 @@ class NarrationBlockManager:
                 old_text_stripped = old_text.strip()
                 if not old_text_stripped:
                     continue
-                # Substring check — one must contain the other.
-                if new_text in old_text_stripped or old_text_stripped in new_text:
-                    score = min(len(new_text), len(old_text_stripped)) / \
-                            max(len(new_text), len(old_text_stripped)) * 100
-                    if score > best_score:
-                        best_match_idx = i
-                        best_score = score
+                # P3.44.7: containment ratio OR difflib ratio — whichever
+                # is larger (substitution edits break containment).
+                score = _relatedness(old_text_stripped, new_text) * 100
+                if score > best_score:
+                    best_match_idx = i
+                    best_score = score
             if best_match_idx >= 0 and best_score >= 80:
-                old_block = old_blocks[best_match_idx][0]
-                self._transfer_overrides(old_block, new_block)
+                old_block, old_text = old_blocks[best_match_idx]
+                self._transfer_overrides(
+                    old_block, new_block, old_text,
+                    text[new_block.start_offset:new_block.end_offset])
                 used_old.add(best_match_idx)
-        # P3.23 third pass (design §25 — no silent Character loss):
+        # P3.44.7 pass 2.5 — SPLIT / union coverage: one old block whose
+        # text is the concatenation of consecutive unmatched new blocks.
+        split_consumed = self._apply_split_pass(
+            old_blocks, used_old, new_blocks, text)
+        used_old |= split_consumed
+        # P3.23 third pass (design §25 — no silent Character loss), with
+        # the P3.44.7 difflib extension for substitution edits:
         # any old block that HAD a Character but was NOT matched to a new
         # block donates its Character as lost_character_id to the new block
-        # with the highest text overlap (best-effort recovery), so the user
+        # with the highest relatedness (best-effort recovery), so the user
         # is warned and can re-assign instead of the assignment vanishing.
-        unmatched_old = [i for i in range(len(old_blocks))
-                         if i not in used_old
-                         and old_blocks[i][0].character_id]
-        if unmatched_old:
-            for i in unmatched_old:
-                old_block, old_text = old_blocks[i]
-                old_text_stripped = old_text.strip()
-                if not old_text_stripped:
-                    continue
-                # Candidate new blocks: not carrying a character and not
-                # already carrying a lost_character_id.
-                best_nb = None
-                best_overlap = 0.0
-                for nb in new_blocks:
-                    if nb.character_id or nb.lost_character_id:
-                        continue
-                    nb_text = text[nb.start_offset:nb.end_offset].strip()
-                    if not nb_text:
-                        continue
-                    if nb_text in old_text_stripped or old_text_stripped in nb_text:
-                        overlap = min(len(nb_text), len(old_text_stripped)) / \
-                                  max(len(nb_text), len(old_text_stripped))
-                        if overlap > best_overlap:
-                            best_overlap = overlap
-                            best_nb = nb
-                if best_nb is not None and best_overlap > 0:
-                    best_nb.lost_character_id = old_block.character_id
-                    best_nb.manually_edited = True
-                    logger.info(
-                        "Re-detect: character '%s' not reliably matched — "
-                        "recorded as lost_character_id (warning + re-assign).",
-                        old_block.character_id)
+        self._donate_lost_characters(
+            [old_blocks[i] for i in range(len(old_blocks))
+             if i not in used_old], new_blocks, text)
         self._blocks = new_blocks
         self._last_text = text
 
     @staticmethod
     def _transfer_overrides(old_block: PromptBlock,
-                            new_block: PromptBlock) -> None:
+                            new_block: PromptBlock,
+                            old_text: Optional[str] = None,
+                            new_text: Optional[str] = None) -> None:
         """Transfer override values, label, locked, manual state AND the
         Character assignment from the old block to the new block. Does NOT
         transfer offsets (the new block keeps its own detected offsets) or
@@ -249,6 +286,14 @@ class NarrationBlockManager:
         P3.23 (design record §25): the Character assignment is an explicit
         semantic user decision — it transfers with a successful similarity
         match, and any stale lost_character_id warning is cleared.
+
+        P3.44.7 — SFX/pause insertions are span-local semantic metadata:
+        they transfer with a deterministic offset mapping when the texts
+        are known (``old_text``/``new_text`` are the RAW block texts). An
+        insertion whose anchor position cannot be mapped is dropped
+        (logged) — never guessed onto unrelated text. Without texts the
+        insertions copy verbatim (only valid for identical text; the
+        materializer's range guard drops corrupt offsets defensively).
         """
         new_block.emotion = old_block.emotion
         new_block.style = old_block.style
@@ -260,6 +305,265 @@ class NarrationBlockManager:
         new_block.manually_edited = True
         new_block.character_id = old_block.character_id
         new_block.lost_character_id = None
+        if old_text is not None and new_text is not None:
+            NarrationBlockManager._map_insertions(
+                old_block, new_block, old_text, new_text)
+        else:
+            new_block.sfx_insertions = list(old_block.sfx_insertions)
+            new_block.pause_insertions = list(old_block.pause_insertions)
+
+    @staticmethod
+    def _map_offset(old_text: str, new_text: str, offset: int) -> Optional[int]:
+        """Map a block-relative insertion offset old text → new text.
+
+        Deterministic rules, in order:
+        1. identical texts           → identity;
+        2. new text inside old text  → shift by the substring position
+                                       (split/shrink: an offset OUTSIDE
+                                       the new span returns None — it
+                                       belongs to a sibling block);
+        3. old text inside new text  → shift by the substring position
+                                       (growth/merge);
+        4. otherwise                 → difflib matching blocks: an offset
+                                       inside a matching block maps
+                                       through it; an offset in an EDITED
+                                       region returns None (the anchor
+                                       text no longer exists).
+        """
+        if old_text == new_text:
+            return offset
+        if new_text and new_text in old_text:
+            pos = old_text.find(new_text)
+            if pos <= offset < pos + len(new_text):
+                return offset - pos
+            return None
+        if old_text and old_text in new_text:
+            return offset + new_text.find(old_text)
+        for a, b, size in difflib.SequenceMatcher(
+                None, old_text, new_text, autojunk=False).get_matching_blocks():
+            if size and a <= offset < a + size:
+                return b + (offset - a)
+        return None
+
+    @staticmethod
+    def _map_insertions(old_block: PromptBlock, new_block: PromptBlock,
+                        old_text: str, new_text: str) -> None:
+        """Transfer sfx/pause insertions with deterministic offset mapping.
+
+        Unmappable anchors (the user edited away the very text at the
+        insertion point) are dropped and logged — the explicit outcome
+        for ambiguity mandated by the P3.44.7 product rule.
+        """
+        mapped_sfx = []
+        for ins in old_block.sfx_insertions:
+            off = NarrationBlockManager._map_offset(old_text, new_text, ins.offset)
+            if off is None:
+                logger.info(
+                    "Re-detect: SFX '%s' at offset %d is not mappable to "
+                    "the matched block text — dropped deterministically.",
+                    ins.sfx_name, ins.offset)
+                continue
+            mapped_sfx.append(SfxInsertion(ins.sfx_name, ins.onomatopoeia, off))
+        mapped_pauses = []
+        for ins in old_block.pause_insertions:
+            off = NarrationBlockManager._map_offset(old_text, new_text, ins.offset)
+            if off is None:
+                logger.info(
+                    "Re-detect: %s at offset %d is not mappable to the "
+                    "matched block text — dropped deterministically.",
+                    ins.pause_type, ins.offset)
+                continue
+            mapped_pauses.append(PauseInsertion(ins.pause_type, off))
+        new_block.sfx_insertions = mapped_sfx
+        new_block.pause_insertions = mapped_pauses
+
+    def _apply_split_pass(self, old_pairs, used_old, new_blocks, text) -> set:
+        """P3.44.7 SPLIT / union-coverage pass.
+
+        For every UNCONSUMED old block that carries semantic state, look
+        for the first run of consecutive UNMATCHED new blocks whose
+        whitespace-normalised concatenation equals the old block's
+        whitespace-normalised text — i.e. the detector split the old
+        block. On a hit:
+        - block-wide semantics (overrides, label, locked, Character)
+          transfer to EVERY child;
+        - span-local SFX/pause insertions allocate to the child whose
+          mapped region within the old text contains the offset
+          (sequential search — a repeated child text maps to the NEXT
+          unused occurrence, so insertions can never double-allocate);
+        - the old block is consumed.
+
+        Returns the set of consumed indices into ``old_pairs``.
+        """
+        consumed = set()
+        if not new_blocks:
+            return consumed
+        new_raw = [text[nb.start_offset:nb.end_offset] for nb in new_blocks]
+        for i, (old_block, old_text) in enumerate(old_pairs):
+            if i in used_old or i in consumed:
+                continue
+            if not (old_block.character_id or old_block.has_overrides()
+                    or old_block.locked):
+                continue
+            old_norm = _norm_ws(old_text)
+            if not old_norm:
+                continue
+            run = self._find_covering_run(new_blocks, new_raw, old_norm)
+            if run is None:
+                continue
+            self._apply_split_transfer(
+                old_block, old_text, new_blocks, new_raw, run)
+            consumed.add(i)
+            logger.info(
+                "Re-detect split: old block '%s' covered by new blocks "
+                "[%d..%d] — semantics transferred to every child.",
+                old_block.id, run[0], run[1])
+        return consumed
+
+    @staticmethod
+    def _find_covering_run(new_blocks, new_raw, old_norm):
+        """First run of consecutive unmatched new blocks covering old_norm.
+
+        Greedy prefix scan: extend a run while its whitespace-normalised
+        concatenation is a prefix of ``old_norm``; return ``(i, j)`` on
+        exact equality. ``new_block.manually_edited`` marks new blocks
+        already matched by passes 1-2 (they can never be split children).
+        Returns None when no run covers the old text.
+        """
+        n = len(new_blocks)
+        for i in range(n):
+            if new_blocks[i].manually_edited:
+                continue
+            first = _norm_ws(new_raw[i])
+            if not first:
+                continue
+            parts = [first]
+            for j in range(i, n):
+                if new_blocks[j].manually_edited:
+                    break
+                if j > i:
+                    ext = _norm_ws(new_raw[j])
+                    if not ext:
+                        break
+                    parts.append(ext)
+                joined = " ".join(parts)
+                if joined == old_norm:
+                    return (i, j)
+                if not old_norm.startswith(joined):
+                    break
+        return None
+
+    @staticmethod
+    def _apply_split_transfer(old_block, old_text, new_blocks, new_raw, run):
+        """Transfer one split old block's semantics to its children."""
+        i, j = run
+        children = new_blocks[i:j + 1]
+        # Each child's region within the OLD raw text (sequential search;
+        # difflib matching blocks as whitespace-reflow fallback).
+        regions = []
+        cursor = 0
+        for k in range(i, j + 1):
+            raw = new_raw[k]
+            region = None
+            if raw:
+                p = old_text.find(raw, cursor)
+                if p >= 0:
+                    region = (p, p + len(raw))
+                    cursor = region[1]
+            if region is None and raw:
+                mb = [m for m in difflib.SequenceMatcher(
+                    None, old_text, raw, autojunk=False).get_matching_blocks()
+                    if m.size > 0]
+                if mb:
+                    lo, hi = mb[0].a, mb[-1].a + mb[-1].size
+                    if hi > lo:
+                        region = (lo, hi)
+                        cursor = hi
+            regions.append(region)
+        # Block-wide semantics → EVERY child (the text still belongs to
+        # the same speaker/semantic context).
+        for child in children:
+            child.emotion = old_block.emotion
+            child.style = old_block.style
+            child.speed = old_block.speed
+            child.pitch = old_block.pitch
+            child.delivery = old_block.delivery
+            child.label = old_block.label
+            child.locked = old_block.locked
+            child.manually_edited = True
+            child.character_id = old_block.character_id
+            child.lost_character_id = None
+            child.sfx_insertions = []
+            child.pause_insertions = []
+        # Span-local insertions → the FIRST child region containing them.
+        for ins in old_block.sfx_insertions:
+            for idx, region in enumerate(regions):
+                if region and region[0] <= ins.offset < region[1]:
+                    children[idx].sfx_insertions.append(SfxInsertion(
+                        ins.sfx_name, ins.onomatopoeia, ins.offset - region[0]))
+                    break
+            else:
+                logger.info(
+                    "Re-detect split: SFX '%s' at offset %d falls in no "
+                    "child span — dropped deterministically.",
+                    ins.sfx_name, ins.offset)
+        for ins in old_block.pause_insertions:
+            for idx, region in enumerate(regions):
+                if region and region[0] <= ins.offset < region[1]:
+                    children[idx].pause_insertions.append(PauseInsertion(
+                        ins.pause_type, ins.offset - region[0]))
+                    break
+            else:
+                logger.info(
+                    "Re-detect split: %s at offset %d falls in no child "
+                    "span — dropped deterministically.",
+                    ins.pause_type, ins.offset)
+
+    @staticmethod
+    def _donate_lost_characters(unmatched_pairs, new_blocks, text) -> None:
+        """P3.23 §25 / P3.44.7 — no silent Character loss.
+
+        Every unmatched old block that HAD a Character donates it as
+        ``lost_character_id`` to the most related new block that carries
+        neither a Character nor a lost warning. Relatedness = containment
+        ratio (the legacy P3.23 rule, any overlap > 0) OR a difflib ratio
+        >= 0.5 (the P3.44.7 extension for substitution edits). A block
+        with NO related new block (the text is gone entirely) records
+        nothing — there is nothing plausible to warn on.
+        """
+        for old_block, old_text in unmatched_pairs:
+            if not old_block.character_id:
+                continue
+            old_text_stripped = old_text.strip()
+            if not old_text_stripped:
+                continue
+            best_nb = None
+            best_score = 0.0
+            for nb in new_blocks:
+                if nb.character_id or nb.lost_character_id:
+                    continue
+                nb_text = text[nb.start_offset:nb.end_offset].strip()
+                if not nb_text:
+                    continue
+                containment = 0.0
+                if nb_text in old_text_stripped or old_text_stripped in nb_text:
+                    containment = min(len(nb_text), len(old_text_stripped)) / \
+                                  max(len(nb_text), len(old_text_stripped))
+                ratio = difflib.SequenceMatcher(
+                    None, old_text_stripped, nb_text, autojunk=False).ratio()
+                score = max(containment, ratio)
+                # Legacy containment donation (any overlap) kept verbatim;
+                # difflib alone must reach 0.5 to count.
+                if (containment > 0 or score >= 0.5) and score > best_score:
+                    best_score = score
+                    best_nb = nb
+            if best_nb is not None and best_score > 0:
+                best_nb.lost_character_id = old_block.character_id
+                best_nb.manually_edited = True
+                logger.info(
+                    "Re-detect: character '%s' not reliably matched — "
+                    "recorded as lost_character_id (warning + re-assign).",
+                    old_block.character_id)
 
     def split_block(self, block_id: str, split_offset: int) -> bool:
         block = self.get_block(block_id)

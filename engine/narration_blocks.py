@@ -96,9 +96,31 @@ class PromptBlock:
     duration: float = 0.0  # seconds of generated audio (when status == "done")
 
     def has_overrides(self) -> bool:
-        return any(v is not None for v in
-                   (self.emotion, self.style, self.speed,
-                    self.pitch, self.delivery))
+        """True when this block carries ANY user-authored semantic state.
+
+        P3.44.7 — the previous definition (emotion/style/speed/pitch/
+        delivery only) made a Character-only assignment invisible to
+        ``NarrationBlockManager.has_manual_edits``, so Re-detect took the
+        DIRECT rebuild branch and silently destroyed the assignment.
+        The definition now covers every semantic field a user can
+        author on a block: the five override values, the Character
+        assignment, the label, and SFX/pause insertions.
+
+        Deliberately EXCLUDED:
+          - ``lost_character_id`` — a warning about an already-lost
+            Character, not semantic content;
+          - ``locked`` / ``manually_edited`` — control state, tracked
+            separately by ``has_manual_edits``;
+          - ``status`` / ``progress`` / ``duration`` — runtime display
+            state owned by the generation pipeline.
+        """
+        return (any(v is not None for v in
+                    (self.emotion, self.style, self.speed,
+                     self.pitch, self.delivery))
+                or self.character_id is not None
+                or self.label is not None
+                or bool(self.sfx_insertions)
+                or bool(self.pause_insertions))
 
     def to_dict(self) -> Dict[str, Any]:
         return {
