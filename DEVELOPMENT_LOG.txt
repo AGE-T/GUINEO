@@ -3201,3 +3201,88 @@ változatlanul sorrend-alapú (queue order), nulla operatív változás.
 Project Assembly változatlan absztrakciós szinten maradt. A P3.44.7–9
 (Re-detect / mondatszabdaló / blokk-offszet) és a Batch Generation
 Architecture V2 továbbra is halasztva.
+
+================================================================
+  P3.44.7 — RE-DETECT SZEMANTIKAI MEGŐRZÉS
+        (bizonyított veszteségi útvonalak minimális javítása)
+================================================================
+KONTEXTUS: a P3.44.5 kutatási audit Issue-E-je négy, futásidőben
+bizonyított Re-detect szemantikai veszteségi mechanizmust tárt fel; a
+P3.44.6 (slot_id identitás) érintetlen alap. Ez a menet CSAK a
+bizonyított veszteségeket javította — NINCS splitter-javítás (P3.44.8),
+NINCS offszet-javítás (P3.44.9), NINCS Batch-átírás.
+
+GYÖKÉROKOK (a forráson újra igazolva):
+1. A karakterkizárólagos hozzárendelés láthatatlan volt kézi állapotként:
+   a has_overrides() csak az 5 felülírást nézte, az _on_character_changed
+   nem állított manually_edited-et → has_manual_edits=False → a Re-detect
+   DIREKT rebuild ágat vett → minden Character csendben törlődött
+   párbeszéd és lost_character_id figyelmeztetés NÉLKÜL.
+2. A helyettesítő szerkesztés ("mat"→"rug") a kontainmentet teljesen
+   megtörte: se átvitel, se ≥80%-os illeszkedés, se lost-figyelmeztetés
+   — a Character/émóció/címke nyomtalanul tűnt el a Save útvonalon.
+3. Osztódásnál (1 régi blokk → 2 ~50%-os új) egyik gyerek sem érte el a
+   80%-os küszöbetet: a blokk-szintű szemantika EGY új blokkra SEM
+   ment át.
+4. Az SFX/pause beszúrásokat (span-helyi metaadat, offset a blokk
+   szövegén belül) EGYETLEN átviteli pass sem másolta — minden útvonalon
+   eldobódtak, még pontos szövegegyezésnél is. (A szövegben ülő
+   {sfx:...}/{pause} markerek sosem érintettek — azok a szöveggel
+   utaznak.)
+
+MEGOLDÁS (minimal, 3 produkciós fájl):
+- engine/narration_blocks.py: a has_overrides() a VALÓDI szerzői
+  szemantikai állapotot ismeri fel (5 felülírás + character_id + label +
+  SFX/pause jelenlét; a lost_character_id figyelmeztetés tudatosan
+  kimarad).
+- engine/narration_block_manager.py: _relatedness() = max(kontainment,
+  difflib-ráta) — a helyettesítő szerkesztések is mérhetők; _map_offset()
+  determinisztikus offset-leképezés (azonos → identitás; részszöveg →
+  pozícióeltolás; különben difflib matching-blockok; nem feltérképezhető
+  horgony → eldobja és loggolja, SOSE találgat); új SPLIT/union-pass
+  (whitespace-normalizált együttfedés): blokk-szintű szemantika MINDEN
+  gyerekre, span-helyi beszúrások a lefedő gyerek tartományába (szekvenciális
+  régiókeresés — ismételt gyerekszövegnél sosem duplikál); a lost-
+  Character-adomány difflib ≥0,5-tel bővült (a P3.23 kontainment-adomány
+  szó szerint megmaradt); a rebuild_automatic_only (Apply út) ugyanezt a
+  split-passt és lost-adományt kapta (útvonal-ekvivalencia); a
+  _transfer_overrides mostantól az SFX/pause-t is átvíti offset-leképezéssel.
+- ui/panels/narration_editor.py: az _on_character_changed manually_edited-et
+  állít (a kombó programmatikus frissítéskor jelzésblokkolva van — csak
+  valódi felhasználói interakcióra fut le); a Discard megerősítés
+  pontosított szövege néven nevezi a Character-eket és SFX/pause
+  beszúrásokat.
+- P3.44.6-interakció (érintetlen, regresszióval zárolva): a Re-detect
+  NEM nyúl a scene.expected_audio_slots-hoz (a materializációs pont
+  változatlanul a Generate Long); új blokk-ID-k → új slot_id-k; a régi
+  slot_id-val bélyegzett MODERN asset az új struktúrába NEM csatlakozik
+  (identity-first, nincs pozicionális visszabukás); a legacy asset a
+  dokumentált P3.44.5 úton marad. Nincs második identitásrendszer.
+
+TESZTEK (új): tests/test_p3_44_7_redetect_semantic_preservation.py —
+44 teszt: a §18 mátrix (Character 1–6, szemantikai metaadat 7–9, osztódás
+10–12, SFX 13–15, pause 16–17, útvonalak 18–22, invariánsok 23–26) és a
+§19 hamis-megőrzés-tilalom ( kapcsolatlan blokk NEM örököl Character-t/
+SFX-et/pause-t; ismételt gyerekek nem duplikálnak; 1:1 fegyelem;
+megmaradási invariáns: minden régi Character aktív vagy lost-jelölt).
+Szkriptelt detektor-dupla → teljes determinizmus; valódi NarrationEditor
+a dialógus-útvonalakhoz (csak a QMessageBox stub-olt).
+RÉGI-ÚJ BIZONYÍTÁS git stash-sel: a RÉGI kódon 24 vörös / 20 zöld (a 24
+pontosan a defektus-detektorok; a 20 zöld a kontrollok), az ÚJ kódon
+44/44.
+
+VERIFIKÁCIÓ (teljes akkumulátor):
+- Új suite 44/44; teljes battery 1407/1407 zöld 5 csomagban (246
+  célzott P3.44.7+provenance+identitás + 345 P3.35–44 + 368 korai
+  P3.5–21 + 428 középső P3.22–34+audit + 20 P3.30 batch; a dokumentáltan
+  rossz, csak-fában élő test_p3_30_ux_fixes.py kivételével — P3.44.5/6
+  precedens, a hibái a P3.44.7 előtti kódon azonosak).
+- Launch smoke (valódi belépési út): 11/11.
+
+NEM TÖRTÉNT: nincs mondatszabdaló-/GLM 5.2/U.S.A./tizedesjavítás, nincs
+on_text_changed/offszet-/átfedés-/árva-blokk-javítás, nincs Batch/
+Combine/provenancia-architektúra-változás, nincs új identitásrendszer.
+Dokumentált halasztott lelet: a KÉZI split/merge nem osztja újra az
+SFX/pause beszúrásokat (felhasználói művelet, nem Re-detect út — későbbi
+polish-fázis). A P3.44.8 (szabdaló), P3.44.9 (offszet), P3.45 (UX/
+hardening) és a Batch Generation Architecture V2 továbbra is halasztva.

@@ -2228,6 +2228,21 @@ written).
   `preserve_overrides` loses characters on plain edits without the
   lost-warning; SFX/pause insertions are lost on every path; all block
   ids are replaced on every Re-detect.
+  **P3.44.7 RESOLUTION:** the first three mechanisms are FIXED —
+  `has_overrides()` now recognises ANY user-authored semantic state
+  (Character/label/SFX/pause included), the Character combo marks the
+  block manually edited, the similarity match gained a difflib term so
+  substitution edits transfer (or record `lost_character_id` when
+  ambiguous), a union-coverage SPLIT pass transfers block-wide
+  semantics to every child with span-local offset mapping, and SFX/pause
+  insertions transfer on every preservation path (see
+  `docs/design/P3_44_7_REDETECT_SEMANTIC_PRESERVATION.md`). The fourth
+  item (block ids replaced on Re-detect) is BY DESIGN and now explicitly
+  safe: semantics migrate through the matching passes, and after the
+  next Generate Long a modern asset stamped with an OLD `slot_id` joins
+  nothing (P3.44.6 identity-first join — regression-locked). Deferred
+  finding recorded: MANUAL split/merge still do not re-allocate SFX/pause
+  insertions (user operations, not Re-detect paths).
 - **RA-PLAN — GenerationPlan / structure-fingerprint stale-gate**
   (design gap): expected slots carry no source structure fingerprint,
   so a same-block asset whose part decomposition changed can still match
@@ -2253,11 +2268,11 @@ written).
   implementations (the `PromptBuilder` conflict detector detaches SFX
   markers from their sentence).**
 
-Each OPEN item is evidence-backed in the audit report; none is
-scheduled yet. Of the report's recommended fix order, the first two
-items (join discipline, dialog re-wiring) were delivered by P3.44.5;
-the join-discipline item was COMPLETED by P3.44.6 (identity-first
-slot_id join — the fingerprint/plan-gate step is resolved by it, see
-RA-PLAN above); the remaining order is: splitter rules →
-offset boundary fixes → Re-detect semantics → estimate/duplication
-cleanup.
+Each OPEN item is evidence-backed in the audit report. Of the report's
+recommended fix order, the first two items (join discipline, dialog
+re-wiring) were delivered by P3.44.5; the join-discipline item was
+COMPLETED by P3.44.6 (identity-first slot_id join — the
+fingerprint/plan-gate step is resolved by it, see RA-PLAN above);
+Re-detect semantics was COMPLETED by P3.44.7 (see RA-E above); the
+remaining order is: splitter rules (P3.44.8) → offset boundary fixes
+(P3.44.9) → estimate/duplication cleanup (P3.45).
