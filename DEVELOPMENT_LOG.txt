@@ -3725,3 +3725,155 @@ tesztterv; stop/eszkaláció). OPEN_BUGS.md: új P3.45-triage szakasz
 kapcsolatlan backlog-tétel sem törlődött). A P3.45 ITT ÁLL MEG —
 a kapu döntése: a következő menet a P3.45.1 implementálásáról
 dönthet.
+
+════════════════════════════════════════════════════════════════════
+P3.45.1 — BLOCK → PART UX: GENERÁLTSÁGI ÁLLAPOT LÁTHATÓSÁGA
+(tisztán prezentációs összekötés)
+════════════════════════════════════════════════════════════════════
+DÁTUM: 2026-09-28
+ALAP: main @ 5f247db (P3.45 triage-kapu kész; P3.44.9 és P3.44.9.1
+fagyasztva). Munkafa tiszta volt a implementáció előtt (ellenőrizve).
+
+FELADAT: a triage fő megállapításának implementálása — az editor
+ereszékjének blokk-generáltsági jelző-API-ja (update_block_status +
+badge-festő) HOLT KÓD (null hívó), miközben a tesztelt adatforrás
+(block_slot_states) létezik. A kívánt lánc:
+provenance-állapot → block_slot_states → meglévő editor
+update_block_status → meglévő badge/progress vizuál. Nincs új
+azonosság-rendszer, nincs párhuzamos állapottár, nincs ereszék-
+újratervezés, nincs időzítő/lekérdezés.
+
+ELLENŐRZÉS (implementáció ELŐTT, mind a 8 pont újrameserve a HEAD-en):
+1) block_slot_states (audio_provenance.py:350-389) — származtatott,
+   sosem tárolt; production-hívó NINCS. 2) update_block_status
+   (narration_editor.py:578 belső / 2186 külső) — nulla hívó. 3) A
+   badge-festő (310-345) Done/Gen/Queued/Error + progress — létezik,
+   de sosem kap adatot. 4) Befejezési útvonalak: _on_generation_
+   finished_ui (2597) → register_generation_result (EGYETLEN író);
+   hiba → _on_generation_failed_ui (2681); batch-vég → _finish_batch
+   → _on_scene_batch_completed (3614). 5) Batch-indítás
+   (_start_long_narration, 3355): slot-materializáció (3410 — az
+   EGYETLEN production-írási hely; a Re-detect NEM írja) + scene=GENERATING
+   (3550). 6) Betöltés: minden útvonal _load_scene_state (5328) →
+   set_scene_blocks → blocks_changed (már két fogyasztóval). 7)
+   Re-detect: minden ág ÚJ blokk-azonosítókkal (id nem transferálódik)
+   → blocks_changed. 8) Kurzor-szerkesztés (P3.44.9): a blokk-
+   OBJEKTUMOK túlélik → a jelző-adat túléli a szerkesztést.
+   GYÖKER OK: a P3.15-kori badge-API-hoz sosem kötötték a P3.28
+   származtatott modelljének termelőjét — az editor állapot nélküli
+   szemlélő maradt.
+
+IMPLEMENTÁCIÓ (3 fájl + 1 tesztfájl, +177 sor):
+• ui/main_window.py: _sync_block_status_badges() — TISZTA
+  származtatás: block_slot_states(aktív scene) + a scene SAJÁT
+  státusza (GENERATING futásjelzés / ERROR hibajelzés, a meglévő
+  normalize_legacy_status-szal). Blokkonként: covered==total →
+  "done" ("✓ N/N" többrészesnél); futás + fedetlen → "generating"
+  ("⚙ N/N"); nulla fedés + ERROR scene → "error" (meglévő
+  taxonómia); minden más → None (NINCS jelző — sosem elavult Done/
+  Gen). Push a MEGLEVŐ editor.update_block_status API-n keresztül,
+  minden blokk determinisztikusan újraírva (None törlésként).
+• Frissítési pontok (állapotátmenet-vezérelt, NEM időzítő):
+  blocks_changed (struktúra: scene-betöltés/Re-detect/szövegcsere);
+  generálás kész (aktív scene-re regisztrált asset); generálás
+  sikertelen (aktív scene); scene batch kész (futás-végi
+  újraszámolás); Generate Long indítás (futás-indítás + slot-
+  (újr)materializáció). NEM kötve: verzióválasztás (a block_slot_
+  states kijelölés-független — nincs mit frissíteni; tesztként
+  rögzítve), kurzor-szerkesztés (objektumok túlélik), munkánkénti
+  progress (nincs esemény a MainWindow szintjén).
+• ui/panels/narration_editor.py: a KÜLSŐ update_block_status most a
+  AUTORITATÍV blokkmodellre (NarrationBlockManager — ugyanazok a
+  PromptBlock-példányok, amiket az ereszéktükör kap) ír ELŐSZÖR,
+  majd delegál a belső szerkesztőbe. Ez egy VALÓDI sorrendi hibát
+  zár le: a blocks_changed KORÁBBBAN emittálódik, mint ahogy a
+  _render_block_visuals újratölti a vizuális tükröt — a csak tükrön
+  át írt státusz eldobott objektumokra kerülne és elveszne. A
+  belső API + ereszék-újrafestés változatlan. A festőben a
+  többrészes blokkok a fedettséget mutatják ("✓ 2/2" / "⚙ 1/2") —
+  ugyanaz a betűtípus, ugyanaz a téglalap, ugyanaz a culling: a
+  P3.44.9.1-geometria ÉRINTETLEN, csak a címke szövege változik.
+• engine/narration_blocks.py: PromptBlock.parts_done/parts_total
+  futásidejű megjelenítési mezők — PONTOSAN a status/progress/
+  duration szerződés (nem perzisztálódik, nem szemantikus, nem
+  második igazságforrás: minden szinkronnal újra származtatott
+  bemutató-másolat).
+
+TESZTEK: tests/test_p3_45_1_block_generation_state_visibility.py —
+20 fókuszált teszt a VALÓDI MainWindow+Engine+BatchManager csövön
+(ház-minta fake model-határ), a szerkesztő a VALÓDI _load_scene_
+state útvonalon áll helyre. A kötelező mátrix: 1) kezdeti állapot
+(nincs slot / nulla fedés / slot nélküli blokk → nincs jelző);
+2) valós befejezés (Generate Long futás → done + "2/2"; review-
+mód determinisztikus "generating" megfigyelés); 3) izoláció (csak
+b1 generálva → b2/b3 nem örököl); 4) újragenerálás (új verzió → a
+badge a JÓLENNI érvényes állapotot mutatja, a slot 2 verziós);
+5) újratöltés (perzisztencia-körút + valódi scene-visszaállítás →
+a jelzők a MODELLBŐL származnak újra; generálatlan scene-re váltás
+törli); 6) Re-detect (valódi útvonal → új azonosítók semmit nem
+követelnek; a slotok/assetek érintetlenek); 7) verzióválasztás
+(a badge igaz marad — frissítés nem szükséges, dokumentáltan);
+8) nincs elavult widget-állapot (újra-materializáció 2→3 részre →
+a stál Done eltűnik: "generating 2/3" → settle → nincs jelző;
+kurzor-szerkesztés nem semmisíti meg a jelzőadatot). + Festési
+ellenőrzések (valódi ereszék-grab → pixel-vizsgálat: done=SUCCESS
+zöld / error=ERROR piros / generálatlan=SEMMI; állapot-
+érvénytelenítés után a zöld eltűnik). + Fagyasztott-szerződés
+-tyűk: a szink sosem mutál blokkstruktúrát/offsetet/slotot/assetet;
+a to_dict NEM tartalmaz jelző-mezőket; a görgetés sosem mutálja a
+jelzőadatot (Case-A tisztaság).
+
+VALIDÁCIÓ (a implementációs commiton): fókusz P3.45.1 20/20 (kétszer
+futtatva — stabil); P3.28+P3.44.5+P3.44.6 provenance-szvitek 134
+passed; P3.44.9 + P3.44.9.1 fagyasztott szvitek 95 passed + 35
+subtest (külön ÉS a teljes akkun belül); TELJES akku 12 előtéri
+darabban: 1583 passed + 1 failed (SS-3, a dokumentált, preregisztrált
+P3.37 README-teszt — a pristin fán azonosan elbukik) + 35 subtest =
+a dokumentált 1563 alap + pontosan a 20 új teszt; verify_compile
+148/148; verify_architecture PASS; verify_functional_integrity 80/80;
+launch smoke 11/11 a valódi belépési útvonalon.
+
+MANUÁLIS GUI-ELLENŐRZÉS: emberi képernyő-inspekció e környezetben
+NEM lehetséges (kimondva). Helyette a valódi MainWindow-cső
+offscreen renderelése (ss/audit_p3451_visual2.py) és a renderelt
+PNG-ek vision-modell-inspekciója: A) futás közbeni vegyes állapot —
+B1 nincs · B2 zöld "Done" · B3 zöld "2/2" · B4 türkiz "0/2" · B5
+türkiz "Gen..." (pontosan a várt); B) settle után — B2/B3 megtartja,
+B4/B5 jelzője eltűnik; C) ERROR scene — B1/B2 piros "Error", a többi
+semmi. A görgetés-tapadás pixeles deltamérésével kapcsolatos korlát:
+az offscreen lusta layout (a dokumentált P3.44.9.1 harness-verseny)
+miatt a festés-idejű és a szinkron olvasott soralapok >10px-t is
+eltolódhatnak két esemény-ablak között — a tapadás strukturálisan
+biztosított (a badge ugyanabban a festési menetben, ugyanarra a
+sorgy-ra festődik, mint a blokk fejléce), a P3.44.9.1-szvit minden
+görgetési pozícióra rögzíti a sor-geometriát, és az új görgetés-
+tisztasági teszt rögzíti, hogy a görgetés nem mutálja a jelzőadatot.
+
+MARADANDÓ KOCKÁZATOK (csak bizonyítottak): 1) a "generating" scene-
+szintű jelzés — review módban is megjelenik (a scene BADGE-je a
+P3.28 óta ugyanígy viselkedik; munkánkénti granularitás külön
+döntés); 2) fedett blokk újragenerálása közben a "done" marad (az
+előző verzió érvényes — append-only doktrína; a Batch-ablak mutatja
+a munkát); 3) Re-detect törli a jelzőket (új azonosítók nem
+követhetnek régi slotokat — a triage ismert állapota; a slot-újra-
+materializáció Re-detect-nél P3.45.2+ döntés); 4) részleges, üresjá-
+ratú blokkra nincs jelző (a meglévő szótárban nincs őszinte "rész-
+leges" ábrázolás — semmit sem állít; a Batch-ablak hordozza a
+részletet); 5) a scene-státusz életciklusát örökölte a megoldás (ha
+egy jövőbeli hiba GENERATING-ben ragad egy scene-t, a jelző hűen
+mutatja — ugyanazt, amit az oldalsáv).
+
+HATÁRKAPU-ELLENŐRZÉS: nincs új azonosítás-rendszer (slot_id
+érintetlen; nincs fingerprint/GenerationPlan/STALE/session-locking);
+nincs második igazságforrás; nincs strukturális blokk-tartomány-
+változás; nincs P3.44.9.1 görgetés/ereszék-geometria-változás; nincs
+időzítő/lekérdezés; nincs kapcsolatlan renderelés-refaktor; nincs
+P3.45.2+ munka. A tiszta implementáció NEM igényelt szélesebb
+architektúrái változtatást — nem volt ESCALÁCIÓ.
+
+DOKUMENTÁCIÓ: docs/design/P3_45_1_BLOCK_GENERATION_STATE_VISIBILITY.md
+(10 szakasz + manuális GUI-ellenőrzés; gyökérok; implementáció;
+frissítési pontok táblázata; tesztek; validációs táblázat;
+fagyasztott-regresszió-ellenőrzés; határkapu; kockázatok; fájlok).
+OPEN_BUGS.md: P3.45.1 szakasz. A P3.45.1 ITT ÁLL MEG — a P3.45.2
+NEM kezdődött el.

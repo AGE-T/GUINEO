@@ -2502,3 +2502,49 @@ estimate/duplication cleanup (P3.45).
 - **Next**: P3.45.1 implementation decision (block generation state
   in the editor gutter — smallest, both endpoints already exist and
   are tested).
+
+## P3.45.1 round — editor gutter generation-state visibility (presentation-only wiring)
+
+### P3.45.1 — Block generation-state badges were dead code (CLOSED)
+
+- **Status**: **CLOSED** by P3.45.1 (commit on `main`, see
+  DEVELOPMENT_LOG.txt P3.45.1). The P3.45-GATE headline finding —
+  `update_block_status` + badge painter dead (zero callers) while
+  `block_slot_states` exists and is tested — is now wired:
+  `MainWindow._sync_block_status_badges` derives per-block state
+  (done / generating / error / none, with multi-part coverage
+  "✓ N/N" / "⚙ N/N") at five state-transition points (blocks_changed,
+  generation finished, generation failed, batch completed, Generate
+  Long start). No new identity system, no polling, no geometry
+  changes; P3.44.9/.9.1 suites re-verified green (95 + 35 subtests).
+  Full battery: 1583 passed + 1 (SS-3, pre-existing) + 35 subtests =
+  the 1563 baseline + exactly the 20 new tests.
+- **Residuals (recorded, NOT defects of this slice; each needs its
+  own decision before any change)**:
+  1. "generating" is scene-level: review mode shows generating badges
+     before any job runs (same semantics as the scene's own sidebar
+     badge since P3.28). Per-job badge granularity = job-level events
+     at MainWindow (deferred with P3.45.2+).
+  2. A regenerating covered block keeps "done" during the regen —
+     the append-only doctrine keeps the previous version valid; the
+     Batch window shows the actual job progress.
+  3. Re-detect clears all badges while the slot structure keeps the
+     OLD block ids until the next Generate Long (the pre-existing
+     P3.45-GATE finding; badge honestly presents the detach; slot
+     re-materialisation on Re-detect is a P3.45.2+ structure
+     decision).
+  4. Partial idle blocks (some parts covered, no run in flight) show
+     NO badge — the existing vocabulary has no honest partial
+     representation; nothing is claimed, the Batch window holds the
+     detail. A dedicated partial presentation would extend the
+     taxonomy (deferred).
+- **Environment note (recorded)**: pixel-level scroll-attachment
+  measurement is not achievable offscreen (the lazy
+  QPlainTextDocumentLayout stays in-flight — the documented P3.44.9.1
+  harness raciness); attachment is guaranteed structurally (badge
+  painted in the same pass at the same row `gy`), pinned by the
+  P3.44.9.1 suite and the new scroll-purity test, and confirmed
+  visually via rendered-PNG VLM inspection (4 renders, exact expected
+  states read back).
+
+No backlog items were removed in this round.

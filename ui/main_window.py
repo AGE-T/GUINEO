@@ -508,6 +508,11 @@ class MainWindow(QMainWindow):
         # Scene.character_ids — assigning a Character to a block adds the
         # Character to the Scene automatically.
         self._editor.blocks_changed.connect(self._sync_scene_characters)
+        # P3.45.1: block STRUCTURE changes (Scene/project restore via
+        # set_scene_blocks, Re-detect, programmatic text swap) re-derive
+        # the gutter generation-state badges from the active Scene's
+        # provenance state — state-transition driven, no polling.
+        self._editor.blocks_changed.connect(self._sync_block_status_badges)
         self._editor.block_selected.connect(self._on_block_selected)
         self._editor.generate_long_requested.connect(
             self._on_generate_long_narration)
@@ -2661,6 +2666,13 @@ class MainWindow(QMainWindow):
                     self._sidebar.set_scenes(sidebar_scenes)
                     if self._active_scene is not None:
                         self._sidebar.set_active_scene(self._active_scene.id)
+                # P3.45.1: the active Scene's asset stream just changed —
+                # re-derive the editor's per-block generation-state badges
+                # (a fully covered block flips to "done" immediately; a
+                # multi-part block shows its new coverage).
+                if (getattr(asset, "scene_id", None)
+                        == getattr(self._active_scene, "id", None)):
+                    self._sync_block_status_badges()
                 # P3.4: Add to History Recents
                 if self._recents_manager is not None:
                     display = "{0:.1f}s".format(result.output_duration)
@@ -2718,6 +2730,12 @@ class MainWindow(QMainWindow):
                                   for s in self._get_sorted_scenes()]
                 self._sidebar.set_scenes(sidebar_scenes)
                 self._sidebar.set_active_scene(self._active_scene.id)
+            # P3.45.1: the failure recompute may have moved the ACTIVE
+            # Scene to ERROR (zero coverage + failure) — re-derive the
+            # per-block badges so affected blocks show the existing
+            # error representation instead of a stale/absent state.
+            if scene is self._active_scene:
+                self._sync_block_status_badges()
         if result and result.errors:
             error = result.errors[0]
             # P3.44.1: BATCH job failures are surfaced in the Batch
@@ -3553,6 +3571,12 @@ class MainWindow(QMainWindow):
                                        "status": s.status}
                                       for s in self._get_sorted_scenes()]
                     self._sidebar.set_scenes(sidebar_scenes)
+                # P3.45.1: the run started AND the expected-slot structure
+                # was just (re)materialised — push the derived per-block
+                # badges now (blocks with jobs show the generating state;
+                # already-covered blocks keep "done": their previous
+                # versions remain valid through the run).
+                self._sync_block_status_badges()
 
             # Open batch dialog. Concatenation is now a manual button in
             # the dialog — no auto-callback that could freeze the UI.
@@ -3646,6 +3670,11 @@ class MainWindow(QMainWindow):
                 self._sidebar.set_scenes(sidebar_scenes)
             if self._batch_dialog is not None:
                 self._batch_dialog.refresh_scene_context()
+            # P3.45.1: the run ended — the final coverage recompute just
+            # cleared SCENE_GENERATING, so the editor badges settle to
+            # their truthful end state (done / error / no badge).
+            if scene is self._active_scene:
+                self._sync_block_status_badges()
             logger.info(
                 "P3.28: batch completed for scene '%s' — derived status=%s "
                 "(completed=%s failed=%s skipped=%s)",
@@ -3655,6 +3684,84 @@ class MainWindow(QMainWindow):
                 getattr(summary, "skipped", "?"))
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("P3.28: batch-completed recompute failed: %s", exc)
+
+    def _sync_block_status_badges(self) -> None:
+        """P3.45.1: push the DERIVED per-block generation state into the
+        editor's existing gutter status badges.
+
+        This is the wiring the P3.45 triage found dead: the badge painter
+        and the ``update_block_status`` API existed but had ZERO callers,
+        while the tested data source (``block_slot_states``) was consumed
+        only by tests. The chain is now:
+
+            provenance state (slots × append-only assets)
+              → block_slot_states (existing, tested)
+              → this sync (pure derivation, state-transition driven)
+              → editor update_block_status (existing API)
+              → existing badge/progress painter
+
+        Per block (never stored — re-derived on every call):
+
+          covered == total            → "done"       ("✓ N/N" multi-part)
+          run in flight + uncovered   → "generating" ("⚙ N/N" multi-part)
+          zero coverage + ERROR scene → "error"      (existing taxonomy)
+          anything else               → None         (NO badge — never a
+                                       stale Done/Gen; a partial block
+                                       with no run in flight claims
+                                       nothing, the Batch window holds
+                                       the per-part detail)
+
+        The run-in-flight signal is the Scene's OWN derived status
+        (SCENE_GENERATING — set at batch start / selective generation /
+        regen, recomputed at batch end); the failure signal is
+        SCENE_ERROR (zero coverage + last run failed) — both existing
+        scene-level state, no new state machine. Blocks with no expected
+        slots (never Generate-Long'ed, legacy scenes) show no badge:
+        single generations carry no block-scoped provenance and the
+        badge must not invent any.
+        """
+        editor = getattr(self, "_editor", None)
+        if editor is None:
+            return
+        scene = getattr(self, "_active_scene", None)
+        states = {}
+        running = False
+        error_scene = False
+        if scene is not None:
+            try:
+                from engine.audio_provenance import (
+                    block_slot_states, normalize_legacy_status,
+                    SCENE_GENERATING, SCENE_ERROR,
+                )
+                for entry in block_slot_states(scene):
+                    states[entry["block_id"]] = entry
+                scene_status = normalize_legacy_status(
+                    getattr(scene, "status", "") or "")
+                running = (scene_status == SCENE_GENERATING)
+                error_scene = (scene_status == SCENE_ERROR)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "P3.45.1: block status derivation failed: %s", exc)
+                return
+        try:
+            for block in editor.block_manager.blocks:
+                entry = states.get(block.id)
+                status = None
+                parts_done = 0
+                parts_total = 0
+                if entry is not None and entry.get("total", 0) > 0:
+                    parts_total = int(entry["total"])
+                    parts_done = int(entry["covered"])
+                    if entry["covered"] == entry["total"]:
+                        status = "done"
+                    elif running:
+                        status = "generating"
+                    elif entry["covered"] == 0 and error_scene:
+                        status = "error"
+                editor.update_block_status(
+                    block.id, status, 0.0, 0.0, parts_done, parts_total)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("P3.45.1: block status push failed: %s", exc)
 
     def _engine_outputs_dir(self) -> str:
         """The engine's outputs directory (where generated WAVs are saved).

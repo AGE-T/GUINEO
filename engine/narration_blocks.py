@@ -94,6 +94,16 @@ class PromptBlock:
     status: Optional[str] = None  # None | "pending" | "generating" | "done" | "error"
     progress: float = 0.0  # 0.0 - 1.0 (only meaningful when status == "generating")
     duration: float = 0.0  # seconds of generated audio (when status == "done")
+    # P3.45.1: multi-part coverage payload for the gutter badge, derived
+    # from engine.audio_provenance.block_slot_states at the refresh points
+    # (covered / total expected slots of this block). Display-only runtime
+    # state — the SAME contract as status/progress/duration above: never
+    # persisted (to_dict/from_dict), never semantic (has_overrides), and
+    # never a second source of truth (the Scene's slot structure and asset
+    # stream remain the only provenance data; these fields are a pushed
+    # presentation copy, re-derived from that data on every sync).
+    parts_done: int = 0    # covered slots (badge "✓ N/N" / "⚙ N/N" when parts_total > 1)
+    parts_total: int = 0   # expected slots of this block (0/1 = single-part badge)
 
     def has_overrides(self) -> bool:
         """True when this block carries ANY user-authored semantic state.
@@ -111,8 +121,10 @@ class PromptBlock:
             Character, not semantic content;
           - ``locked`` / ``manually_edited`` — control state, tracked
             separately by ``has_manual_edits``;
-          - ``status`` / ``progress`` / ``duration`` — runtime display
-            state owned by the generation pipeline.
+          - ``status`` / ``progress`` / ``duration`` / ``parts_done`` /
+            ``parts_total`` — runtime display state owned by the
+            generation pipeline (P3.45.1: ``parts_*`` are a pushed
+            presentation copy of the derived slot coverage).
         """
         return (any(v is not None for v in
                     (self.emotion, self.style, self.speed,

@@ -322,6 +322,22 @@ class _BlockGutterWidget(QWidget):
                 }
                 color, label = status_colors.get(status,
                                                   (Palette.TEXT_SECONDARY, status))
+                # P3.45.1: multi-part blocks present their slot coverage
+                # ("✓ 2/2", "⚙ 1/2") instead of the generic label. The
+                # per-block part count is DERIVED (block_slot_states over
+                # the Scene's expected slots — pushed here via
+                # update_block_status), not a new data model. Single-part
+                # blocks keep the classic labels; error/queued keep the
+                # existing taxonomy. Same font, same draw rectangle — the
+                # P3.44.9.1 gutter geometry is untouched, only the text.
+                parts_total = int(getattr(block, "parts_total", 0) or 0)
+                if parts_total > 1:
+                    parts_done = int(getattr(block, "parts_done", 0) or 0)
+                    coverage = "{0}/{1}".format(parts_done, parts_total)
+                    if status == "done":
+                        label = "\u2713 {0}".format(coverage)
+                    elif status == "generating":
+                        label = "\u2699 {0}".format(coverage)
                 painter.setPen(QColor(color))
 
                 # Draw status badge at top-right of block
@@ -2185,12 +2201,50 @@ class NarrationEditor(QWidget):
 
     def update_block_status(self, block_id: str, status: str,
                             progress: float = 0.0,
-                            duration: float = 0.0) -> None:
-        """Update the generation status of a block (delegates to editor)."""
+                            duration: float = 0.0,
+                            parts_done: int = 0,
+                            parts_total: int = 0) -> None:
+        """Update the generation status of a block (delegates to editor).
+
+        P3.45.1: the state is written on the AUTHORITATIVE block model
+        (``NarrationBlockManager``) FIRST — the manager's PromptBlock
+        instances are the same objects the gutter's visual mirror is fed
+        from — and only then delegated to the inner editor (the existing
+        badge/progress API + gutter repaint). Writing on the model first
+        makes a status pushed while the visual mirror is momentarily
+        stale (e.g. during the ``blocks_changed`` emit that fires BEFORE
+        ``_render_block_visuals`` re-feeds the mirror on a scene restore
+        or Re-detect) still land on the objects the next render paints;
+        the inner delegation then only refreshes whatever the mirror
+        currently shows.
+
+        ``parts_done`` / ``parts_total`` carry the block's expected-slot
+        coverage (derived from ``block_slot_states`` by MainWindow) so
+        the gutter badge can present multi-part blocks ("✓ 2/2" /
+        "⚙ 1/2"); single-part blocks keep them at 0/0-1 and get the
+        classic labels.
+        """
+        for block in self._block_manager.blocks:
+            if block.id == block_id:
+                block.status = status
+                block.progress = progress
+                block.duration = duration
+                block.parts_done = parts_done
+                block.parts_total = parts_total
+                break
         self._editor.update_block_status(block_id, status, progress, duration)
 
     def reset_all_block_statuses(self) -> None:
         """Clear all block statuses."""
+        # P3.45.1: clear the AUTHORITATIVE model too (the mirror copy in
+        # the inner editor may be momentarily stale during structural
+        # changes — see update_block_status above).
+        for block in self._block_manager.blocks:
+            block.status = None
+            block.progress = 0.0
+            block.duration = 0.0
+            block.parts_done = 0
+            block.parts_total = 0
         self._editor.reset_all_block_statuses()
 
     def get_all_blocks_done(self) -> bool:
