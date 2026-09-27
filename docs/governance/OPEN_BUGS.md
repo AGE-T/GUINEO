@@ -2450,3 +2450,55 @@ estimate/duplication cleanup (P3.45).
   documented sandbox recipe (re-verified in the P3.44.9.1
   environment rebuild); making the probe search the standard
   `LD_LIBRARY_PATH` is test-infrastructure polish for a later phase.
+
+## P3.45 round — triage / design gate (no implementation)
+
+### P3.45-GATE — Block → Part UX / oversized preflight / duration estimation / rendering hardening: scoped and sequenced
+
+- **Status**: **OPEN** (design gate passed; implementation not started)
+- **Scope**: full-repository reconnaissance at `eadbfff` (four
+  read-only exploration passes + direct re-verification of every
+  load-bearing claim, including the re-verification of the reused
+  P3.44.5 audit findings). Design record:
+  `docs/design/P3_45_TRIAGE_DESIGN.md`.
+- **Outcome**:
+  - The deferred RA-UX components (Block ≠ Part UI invisibility;
+    duration estimate inflation) now have a concrete, evidence-based
+    plan — see the design record §2/§3/§4/§7.
+  - The editor gutter's per-block generation-state API
+    (`update_block_status` + badge painter) is DEAD CODE (zero
+    callers) while the data source (`block_slot_states`) exists and
+    is tested — wiring them is the recommended first slice
+    (P3.45.1), presentation-only.
+  - The real oversized-part constraint is the `max_new_tokens/25fps`
+    output ceiling (default 4096 → 163.84 s; the P3.27B observed
+    defect sat at 99.83 % of it). Two silent bypasses exist (uncapped
+    single sentences > 400 chars; `$SPEAKER` turns with no size
+    check); truncation at the ceiling CANNOT be flagged by the
+    output guard. Preflight = pure classification + preview
+    surfacing; no auto-splitting (P3.45.2).
+  - Duration estimation: one formula, two text bases (plain vs
+    tokenized prompt — the measured +102 % inconsistency); the
+    estimate is not recomputed after preview edits; the assemble
+    dialog mislabels measured totals as "estimated". Only
+    consistency fixes are justified; the constant is NOT
+    recalibrated without a measured corpus (P3.45.3).
+  - Rendering hardening: proven defects separated from cosmetic
+    preferences — duplicated `engine.app_root` property,
+    index-keyed `_check_states` (audit L-3, still present),
+    redundant `toPlainText()` copies per paint, no-op-click full
+    viewport repaints, flash-timer viewport repaints, hardcoded
+    block-stripe colours, dead `modern_control_panel.py`. The
+    transparency-stack/GL text question stays behind an escalation
+    gate (§12 of the design record).
+- **Explicitly frozen / escalated** (see design record §12): the
+  P3.44.9 offset engine, the P3.44.9.1 gutter geometry/scroll paths,
+  the slot_id/generation_run/part_version identity model, the
+  append-only asset doctrine, Batch workspace semantics; no
+  GenerationPlan/fingerprint/STALE revival; no estimator
+  recalibration without data; Manual Concatenate semantics, history
+  `slot_id` recording and `_check_states` re-keying each require
+  their own analysis before any change.
+- **Next**: P3.45.1 implementation decision (block generation state
+  in the editor gutter — smallest, both endpoints already exist and
+  are tested).

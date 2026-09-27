@@ -3607,3 +3607,121 @@ mondat-szabdaló (P3.44.8), Re-detect (P3.44.7), slot_id (P3.44.6),
 Batch (P3.44.5), renderelés-architektúra-átírás, NarrationEditor-
 újraírás, timer/polling. A P3.44.9.1 ITT LEÁLL — nincs automatikus
 belépés a P3.45-be.
+
+================================================================================
+P3.45 — BLOKK → PART UX / TÚLMÉRETEZETT BLOKK ELŐFELSZÁRÍTÁS /
+DURÁCIÓ-BECSLÉS / RENDERELÉS-UX KEMÉNYSÉG (TRIAGE / TERVEZÉSI KAPU)
+================================================================================
+
+ALAPOVÁS: eadbfff (P3.44.9.1 kész), main, tiszta fa, szinkron az
+origin-nal. Ez a futás a P3.45 VÉGREHAJTÁSI SZABÁLYA szerint
+TRIAGE-KAPU: teljes kutatás + architektúra-térkép + függőségi térkép
++ első szelet definíció — IMPLEMENTÁCIÓ NEM TÖRTÉNT, és nem is
+történhetett volna ebben a menetben.
+
+MÓDSZER: négy párhuzamos, csak-olvasó feltáró passzus (motor-oldali
+generálási lánc; editor/főablak UX; provenance/combine; batch UI) +
+minden terhelő állítás közvetlen újra-ellenőrzése a jelen fán. A
+P3_44_5_RESEARCH_AUDIT minden újrahasznált megállapítása (§5.1
+Block≠Part láthatóság, §5.7 túlméretes blokk UX-rés, §5.8 /15
+becslés +102% prompt-infláció, §6 holt kód) HEAD-en újra-bizonyítva.
+
+ARCHITEKTÚRA-TÉRKÉNY (részletes: docs/design/P3_45_TRIAGE_DESIGN.md):
+a lánc adat-szinten teljes — PromptBlock.id → SplitPart
+(source_block_id, part_of_block/total_parts_in_block, est=len/15) →
+BatchJob (slot_id, globális part_index, part_version, expected_
+duration) → GenerationRequest/Result → register_generation_result
+(EGY író, append-only audio_assets) → selected_block_audio →
+Scene Combine (resolved_slot_sources, verziózott combined_outputs).
+A szerkezeti esemény EGY: a Generate Long megerősítése
+(expected_audio_slots kicserélése). A MOTOR SOHA nem vág szét — a
+prompt szó szerint megy be (engine.py:252-266), validáció csak
+üres promptra/paraméterre/voice-ra szól.
+
+BLOKK→PART UX RÉSEK (G1-G10, mindegyik kódbizonyított): a legfontosabb
+— az editor ereszékgeneráltság-jelző API-JA (update_block_status +
+festő ⚠/⚙/✓/⏳ + progressbar) HOLT KÓD, nulla hívó; a
+block_slot_states (covered/total/version_count blokkonként, tesztelt)
+csak tesztekből fogy. A part-of-blokk darabszámot (total_parts_in_
+block, P3.15 óta bélyegzett) a ui/ EGYETLEN fájlja sem jeleníti meg.
+A batch-tábla soraiból hiányzik a blokk-azonosság; a címkézés három
+névteret használ (B{N} ereszék / "Block {N}" előnézet / felhasználói
+címke). A kiválasztott verzió csak a batch-popoverben látszik. Minden
+javítás PREZENTÁCIÓS szintű — az identitásmodell (slot_id/run/
+part_version) elegendő, új identitásrendszer NEM kerül bevezetésre.
+
+TÚLMÉRETEZETT BLOKK (valódi technikai korlát bizonyítva): a
+max_new_tokens/25fps kimeneti PLAFOND (alap 4096 → 163,84 s; a
+P3.27B-ben megfigyelt 163,56 s = a plafond 99,83%-a). KÉT CSENDES
+ÁTJÁRÓ: az 400 karakternél hosszabb egymondat SAJÁT partként korlát
+nélkül (narration_splitter.py:727-735), és a $SPEAKER-szakaszok
+SEMMI méretellenőrzésen nem mennek át (MAX_CHARS a speaker-ágban
+sehol nem hivatkozott). A plafond elérésekor a kimenet csendben
+félbeszakad — az őrszem R2 szabálya (3× ÉS +20 s) ezt nem tudja
+jelzeni, mert a csonkolt kimenet a várakozás ALATT van. A models.py:50
+"4096 ≈ 30s" kommentje a 25fps-matematikával (output_guard.py:15)
+ellentmondásban áll — korrigálandó az előfelügyelet landolásakor.
+Előfelügyeleti betét: TISZTA osztályozó függvény a SplitPart-listán a
+valódi request-paraméterek alapján (within-range / likely-multi-part /
+cannot-safely-process) + előnézeti párbeszédpanel-megjelenítés; NINCS
+automatikus szétvágás, NINCS tartalom-átírás. Az előnézeti szerkesztés
+után az estimated_duration NEM számolódik újra (long_narration_
+dialog.py:491-522) — az elavult becslés az őrszem R2-összehasonlításába
+folyik.
+
+DURÁCIÓ-BECSLÉS: EGY formula (len/15) ÖT helyen, KÉT különböző
+szövegbázissal — a splitter sima szöveget számol (421/504/573/642), az
+editor Előnézet-statisztikája a TOKENIZÁLT promptot (narration_
+editor.py:2093 → a dokumentált +102% infláció forrása): ugyanaz a
+szöveg két felületen kétszerannyi másodpercet "ígér". A konstans
+kalibrálatlan (valós korpusz nem létezik); az őrszem küszöbei tudatosan
+érzéketlenek a ±50%-os becslési hibára. INDOKOLT javítás CSAK a
+konzisztenciára (bázis-egységesítés/újracímkézés, szerkesztés-utáni
+újraszámolás, az assemble "estimated" felirat-hiba) — a képlet
+CSEREJE NEM indokolt adatok nélkül; a mérési korpusz passzívan
+gyűjthető (a rendszer rögzíti a mért kimeneteket).
+
+RENDERELÉS-UX KEMÉNYSÉG (bizonyított hibák a kozmetika
+elkülönítve): engine.py app_root DUPLA property (490-492 ÉS 785-786 —
+az második árnyékolja az elsőt; a P3.44.5-ös audit óta megvan);
+_check_states index-kulcsos a slot-kulcsos docstring ellenére + a
+Load Queue után nem származtatódik újra (bg:779-781 vs 2154-2156,
+2840-2854); toPlainText() négyszer festés/kattintás/kurzor-útvonalon
+(a paintEvent-beli eredmény FELHASZNÁLATLAN — narration_editor.
+py:187); teljes viewport-újrafestés érintetlen kattintásra; a villanás-
+animáció a viewportot is újrafestesti 30 ms-enként; hardcode-olt
+blokkcsík-színek a téma-rendszer megkerülésével; combined-sorok
+teljes újjáépítése vezérlő-változásnál; modern_control_panel.py
+(1971 sor) holt kód. A dokumentált transzparencia-stack/GL szöveg-
+lágyulás (FONT-audit) KÜLÖN architektúrai döntést igényel — a P3.45
+alapértelmezett tétele NEM ez. A P3.44.9.1 gördítésszinkron nem
+regresszált — nem kerül újranyitásra.
+
+JAVASOLT VÉGREHAJTÁSI SORREND (függőség + kockázat alapján):
+1) P3.45.1 — blokk-generáltsági állapot az editor ereszékébe (a
+holt API + a tesztelt block_slot_states összekötése a MEGLEVŐ
+push-frissítési pontokon; tisztán prezentációs; a P3.44.9/.9.1
+kontroll-szviték kötelező újrafutásával);
+2) P3.45.2 — túlméretes-part ELŐFELSZÁRÍTÁS (tiszta osztályozó +
+előnézeti megjelenítés + szerkesztés-utáni becslés-újraszámolás +
+models.py komment-javítás);
+3) P3.45.3 — duráció-konzisztencia (bázis-egységesítés, assemble
+felirat);
+4) P3.45.4 — batch-tábla blokk-azonosság oszlop;
+5) P3.45.5 — renderelési higiénia (holt kód, app_root duplikátum,
+festéscsökkentés) KÜLÖN commitokban, viselkedéstől elkülönítve.
+ESZKALÁCIÓS KAPUK: kézi Concatenate szemantika, egyszerű-Generate
+struktúra-üzenet, history slot_id, _check_states át kulcsozása,
+transzparencia-stack, képlet-újrakalibráció — mindegyik külön
+döntést/elemzést igényel (részletesen a triage-dokumentum §12).
+
+DOKUMENTÁCIÓ: docs/design/P3_45_TRIAGE_DESIGN.md (12 szakasz:
+jelenlegi architektúra; UX-rések táblázata; túlméretes blokk
+korlátai+betétjei; duráció-becslés igazsága; renderelési
+keménység bizonyított/kozmetikus szétválasztva; függőségek;
+végrehajtási sorrend; első szelet definíció; fájlok; kockázatok;
+tesztterv; stop/eszkaláció). OPEN_BUGS.md: új P3.45-triage szakasz
+(a RA-UX elhalasztott tételei most konkrét tervet kaptak; egyetlen
+kapcsolatlan backlog-tétel sem törlődött). A P3.45 ITT ÁLL MEG —
+a kapu döntése: a következő menet a P3.45.1 implementálásáról
+dönthet.
