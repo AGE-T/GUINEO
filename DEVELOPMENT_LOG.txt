@@ -3492,3 +3492,118 @@ mondat-szabdaló (P3.44.8 érintetlen — 62/62), slot_id-identitás
 érintetlen — 29/29), GenerationPlan/STALE/fingerprint, Block→Part UX,
 oversized-block preflight, duráció-becslés, renderelés. A P3.44.9
 itt leáll — nincs automatikus belépés a P3.45-be.
+
+================================================================================
+P3.44.9.1 — BLOKK-ERESZÉK / SZÖVEG-GÖRDÍTÉS SZINKRON
+(CÉLZOTT VIZUÁLIS UTÁNFUTÓ — BIZONYÍTÁS-ELŐTTI, MINIMÁL JAVÍTÁSI FAZIS)
+================================================================================
+
+CÉL: a jelentett vizuális hiba gyökérokokának BIZONYÍTÁSA és a
+legkisebb biztonságos javítás. Tünet: 30+ blokos dokumentumban a
+görgetés után a bal ereszék (B1, B2, …) címkéi nem követték a szöveget
+— B1..B12 vizuálisan a tetején ragadtak, miközben a látható szöveg már
+sokkal későbbi blokoknál járt; frissfestéskor (resize/blokkadat-
+változás) a címkék ESSÉK össze/kaszkádtak: minden sor az előző SOR alá
+került egy MIN_ROW_HEIGHT-tel (18 px) a saját szövegpozíciója helyett
+(mérve: 25 címke egy 11-blokkos sávban; B15 170 px-lel a saját szövege
+alatt a valódi MainWindow-szondában).
+
+KÖRNYEZET-HELREÁLLÍTÁS (a futó sandbox-visszaállítás után): a
+github.com/AGE-T/GUINEO friss klónja HEAD d4ce5d4 — a P3.44.9-mag
+(dcd16c7) és a releases-takarítás (5ae3619) sértetlen; a teszt-
+környezet a dokumentált recept szerint újraépítve (PySide6 6.11.2 +
+sounddevice uv-vel a /home/z/.venv-be; GL-shim /tmp/gllibs-ben).
+Alapvonal-ellenőrzés: a P3.44.9-szvita 76 passed + 35 alteszt zöld
+volt BÁRMILYEN változtatás előtt.
+
+DIAGNÓZIS (három determinisztikus sonda, ss/p34491_*.py — produkciós kód
+érintetlen): a truth-szonda rögzítette, hogy a cursorRect() ÉS a
+blockBoundingGeometry() VIEWPORT- (görgetés-kompenzált) koordináták —
+a blockBoundingGeometry(...).translated(contentOffset()) == cursorRect
+pontosan; a függőleges gördítő sorrészletes (value == első látható
+blokk). A gutter-szonda (40 valódi blokk, festésszámlálók mindkét
+margin-widgeten) elő-javításban: ereszékfestés görgetés közben +0
+(a sorszámmező +1) — FAGYOTT KÉP; friss sorok az alján 31/31 rosszul
+igazítva (B2@18..B32@588 kaszkád, ~19 px/blokk); resize-görgetésben
+0/19 igazított. A layout-szonda: a dokumentum-geometria (doc_y)
+görgetésre INVARIÁNS — a görgetés semmit sem mutál.
+
+GYÖKÉROK (három komponens, MIND vizuális réteg — a P3.44.9
+offszetmotorjával NINCS közös gyökér, Case A):
+1. AZ updateRequest SOHA nem hajtotta az ereszék újrafestését — a
+   CodeEditor csak a LineNumberArea-t kötötte rá; az ereszéknek SEMMI
+   gördítő-jel-kapcsolata nem volt (fagyott kép).
+2. A P3.41-es clamp (row_top = max(y_top, prev_bottom + 1))
+   FELTÉTELNÉLÜLÜL a teljes előző SOR alá láncolt: a nézetablak
+   fölé görgetett blokkokat (negatív y_top) visszahúzta a sávba, és
+   minden következő sort egy MIN_ROW_HEIGHT-tel lejjebb tolt.
+3. Ugyanez a clamp bekezdéseken ÁT láncolt a P3.44.8-as
+   mondatpároknál (közös sortörött sor) — ~19 px/címke csúszás
+   (P3.41 óta elő-létező).
+
+VÉGREHAJTÁS (1 produkciós fájl: ui/panels/narration_editor.py,
++~120/−5): (a) ÚJ BlockAwarePlainTextEdit._update_line_number_area
+felülírás — super() majd gutter.update() UGYANAZON az updateRequest-
+útvonalon (nincs timer, nincs polling; konstrukciós sorrend-védelem:
+a gutter None-ra elő-állítva a super().__init__ előtt, mert a jel már
+az alapkonstrukció alatt kibocsátásra kerül); (b) a _block_rows()
+CSAK valódi degenerált szomszédságnál rakosgat (y_top <=
+prev_TEXT_bottom + 1 — ugyanazon/szomszédos SZÖVEGsor; a többi blokk
+a SAJÁT szövegkezdőpontján horgonyzik viewport-koordinátában, így
+görgetésnél minden sor a szöveggel együtt mozog); (c) monotón
+vágó-átmenet — a sorok szigorúan diszjunktak maradnak a nem-monoton
+lazy-layout-becslések ellenére is (az ÁTTÖRŐ korábbi sor alját
+vágja vissza, sosem tolja a későbbit a saját szövegétől — a túlkö-
+télt pár-geometriában a vágott sor lehet MIN_ROW_HEIGHT alatt, ami
+a következő festésnél öngyógyul).
+
+TESZTEK (új): tests/test_p3_44_9_1_block_gutter_scroll_sync.py —
+19 teszt (valódi widgetek; kettő teljes-köteg: valódi Engine +
+MainWindow + auto-detect szabdaló): gördítő-pozíciók (teteje=
+KONTROLL, közép, alja, minden-pozíció sweep), blokkszám-sweep
+15/30/40, címke-blokk azonosság + adattisztaság görgetés közben
+(KONTROLL — Case A bizonyíték), kaszkád-mentesség, nulla csúszás
+körúton és öt ismételt cikluson, törött soros változó-magasság,
+resize görgetésben (szélesítés + szűkítés = újra-tördelés), szer-
+kesztés a VALÓDI offszetmotoron át görgetésben (azonosság-KONTROLL +
+igazítás), Scene-körút-rehidratáció a valódi begin_scene_load/
+set_text/set_scene_blocks/end_scene_load útvonalon + görgetés,
+festési szerződés (festésszámlálók — a patch a példányosítás ELŐTT
+telepítendő, mert a PySide6 a C++ virtuálisok Python-felülírását
+példány-létrehozáskor rögzíti), valamint a P3.41-es szerződés-
+KONTROLLOK (degenerált szomszédsági rakosgatás + kattintásos
+sor-találatvizsgálat valódi QTest-kattintásokkal). Öt teszt-
+környezeti lecke beépítve: a valódi set_block_data + set_show_blocks
+páros tükrözése; a lazy layout 3-egymást-követő-stabil lecsitítása;
+a fix méretű ablak + viewport-őr a valódi-ablakos tesztekben; a
+±1 px-es blockBoundingGeometry/cursorRect alsó-él különbség strict/
+loose tűréspárja a culling-határon.
+
+RÉGI-ÚJ BIZONYÍTÁS (produkciós változás git-stash-olva): RÉGI kód
+14 failed / 5 passed (az 5 = szándékos kontroll: teteje-igazítás,
+görgetés-adattisztaság, szerkesztés-azonosság, P3.41-szomszédság,
+P3.41-kattintás-konzisztencia); ÚJ kód 19/19. Fókusz-csomagok:
+P3.44.9 (76+35), P3.41-es ereszékszerződés (28), blokk/editor
+(P3.15x2, P3.26) mind zöldek a javítással; teljes báteriát lásd az
+OPEN_BUGS/devel-napló állapotában.
+
+DOKUMENTÁCIÓ: docs/design/P3_44_9_1_BLOCK_GUTTER_SCROLL_SYNC.md
+(9 szakasz: tünet, diagnosztikai módszer, architektúra-tények,
+mért gyökérokok, a pontos javítás, Case-A közös-gyökér-megállapítás,
+regressziós lefedettség, bizonyíték-alapú maradványok, scope-ellenőrzés).
+OPEN_BUGS.md: új P3.44.9.1-menet szakasz (SS-5 CLOSED; SS-6 környezeti
+megjegyzés) — nem került törlésre egyetlen kapcsolatlan backlog-tétel sem.
+
+MARADVÁNYOK (bizonyíték-alapú): mondatpárok közös törött soránál EGY
+diszjunkt stack-lépés címkécsúszás marad (korábban korlátlan lánc; a
+P3.41-es diszjunktsági szerződés ára renderelés-újratervezés nélkül);
+a nézetablaktól távoli blokkok sorai lazy-layout-becslésekből jönnek
+a materializációig (a festés cullingolja, öngyógyul); ablakozott
+vizuális emberi ellenőrzés ebben a sandboxban nem volt lehetséges
+(minden geometriai állítás valódi Qt-widgetgeometriából számol).
+
+NEM TÖRTÉNT: offszetmotor-javítás (P3.44.9 érintetlen — Case A),
+mondat-szabdaló (P3.44.8), Re-detect (P3.44.7), slot_id (P3.44.6),
+Batch (P3.44.5), renderelés-architektúra-átírás, NarrationEditor-
+újraírás, timer/polling. A P3.44.9.1 ITT LEÁLL — nincs automatikus
+belépés a P3.45-be.

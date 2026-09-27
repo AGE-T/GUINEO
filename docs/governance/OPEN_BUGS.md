@@ -2316,7 +2316,9 @@ fingerprint/plan-gate step is resolved by it, see RA-PLAN above);
 Re-detect semantics was COMPLETED by P3.44.7 (see RA-E above);
 splitter rules was COMPLETED by P3.44.8 (see RA-C above);
 offset boundary fixes were COMPLETED by P3.44.9 (see RA-A2/A3/A4
-above); the remaining order is: estimate/duplication cleanup (P3.45).
+above); the visual gutter/scroll synchronisation follow-up was
+COMPLETED by P3.44.9.1 (see SS-5 below); the remaining order is:
+estimate/duplication cleanup (P3.45).
 
 ## P3.44.8 round — sentence splitter integrity
 
@@ -2395,3 +2397,56 @@ above); the remaining order is: estimate/duplication cleanup (P3.45).
   still-busy-engine retry chain.
 - **Disposition**: deferred — needs a deterministic engine-busy barrier
   in the harness (test infrastructure, outside the phase scope).
+
+## P3.44.9.1 round — block gutter / text scroll synchronisation
+
+### SS-5: block gutter labels desynchronised from the scrolling text viewport
+
+- **Status**: **CLOSED** (P3.44.9.1)
+- **Severity**: Medium (visual only — no block data was ever affected)
+- **Symptom**: with 30+ blocks, scrolling left the gutter labels
+  frozen near the top (B1..B12 painted at the scroll=0 rows while the
+  visible text was far below); any forced repaint at depth produced a
+  stacking cascade (each label one MIN_ROW_HEIGHT below the previous
+  ROW instead of at its own block's text; measured 25 labels in an
+  11-block band, B15 170 px below its own text in the real-MainWindow
+  probe).
+- **Root cause** (three visual-layer components, evidence-first
+  probes `ss/p34491_*.py`): (1) `QPlainTextEdit.updateRequest` was
+  connected ONLY to the LineNumberArea — the block gutter never
+  repainted on scroll (frozen image); (2) the P3.41 clamp
+  `max(y_top, prev_bottom + 1)` chained unconditionally — blocks
+  scrolled off above the viewport were dragged back INTO the band;
+  (3) the same clamp chained across paragraphs for sentence-pair
+  blocks sharing a wrapped line. Case A — completely independent of
+  the P3.44.9 offset engine (scrolling fires no text-change path;
+  ids/offsets/owned text byte-identical across scroll cycles, pinned
+  by permanent control tests).
+- **Fix**: `ui/panels/narration_editor.py` only — (a)
+  `_update_line_number_area` override repaints the gutter on the SAME
+  updateRequest path (no timers/polling; construction-order guard for
+  the signals emitted during base-class construction); (b)
+  `_block_rows()` stacks only on genuine degenerate adjacency
+  (block text starting on the same/adjacent TEXT line as the previous
+  block's text end) — separated blocks anchor at their OWN text start
+  in viewport coordinates; (c) a monotonic trim pass keeps rows
+  strictly disjoint against non-monotonic lazy-layout estimates.
+  19 permanent regression tests (incl. two real Engine+MainWindow+
+  auto-detect full-stack tests); old-code proof 14 red / 5 controls
+  (top alignment, scroll data purity, edit identity, P3.41 adjacency,
+  P3.41 click consistency) → 19/19. Design record:
+  `docs/design/P3_44_9_1_BLOCK_GUTTER_SCROLL_SYNC.md`.
+
+### SS-6 (environment note, recorded): GL-shim path affects DPI probe tests
+
+- **Status**: **OPEN** (environment, not an application defect)
+- **Severity**: Low (test-only): `tests/p340_dpi_probe.py` hard-codes
+  the GL-shim library path `/tmp/gllibs/usr/lib/x86_64-linux-gnu`.
+  When the shim is extracted to a different location the 3 DPI tests
+  fail in the sandbox harness with an identical signature on the
+  pristine tree; aligning the shim path restores 26/26 green. A
+  windowed desktop run does not need the shim at all.
+- **Disposition**: deferred — the hard-coded path mirrors the
+  documented sandbox recipe (re-verified in the P3.44.9.1
+  environment rebuild); making the probe search the standard
+  `LD_LIBRARY_PATH` is test-infrastructure polish for a later phase.

@@ -99,11 +99,42 @@ class _BlockGutterWidget(QWidget):
         Returns a list aligned with ``editor._blocks``: each entry is
         ``(block, row_top, row_bottom)`` or ``None`` for a block whose
         offsets are degenerate (start >= end — nothing to paint).
+
+        P3.44.9.1 (scroll synchronisation) — ANCHOR RULE:
+            Rows are anchored at each block's OWN live text geometry
+            (``cursorRect`` — viewport coordinates, so every row moves
+            with the text while scrolling). Stacking below the previous
+            row happens ONLY on genuine degenerate adjacency: the
+            block's text starting on the same text line as (or the line
+            immediately at) the previous block's text end — e.g. the
+            user removed the separator blank line, or the P3.44.8
+            sentence splitter emitted two sentence blocks that share a
+            wrapped line.
+
+            The previous P3.41 clamp ``max(y_top, prev_bottom + 1)``
+            chained unconditionally: blocks scrolled off above the
+            viewport (negative y) were dragged back INTO the gutter
+            band, and each following row was pushed below the previous
+            ROW bottom — a ~MIN_ROW_HEIGHT-per-block cascade that left
+            the labels far from their own text. Comparing against the
+            previous block's TEXT bottom confines stacking to real
+            adjacency; separated blocks anchor at their own text start
+            in viewport coordinates, so the gutter tracks the scroll.
+
+            A final monotonic trim pass keeps rows strictly disjoint
+            even when the lazy QPlainTextDocumentLayout hands out
+            non-monotonic estimates for blocks far outside the viewport
+            (overlap is resolved by trimming the EARLIER row's bottom —
+            never by pushing the later row away from its own text; a
+            trimmed row may be shorter than MIN_ROW_HEIGHT in that
+            over-constrained case — self-healing on the next paint
+            once the layout materialises).
         """
         editor = self._editor
         text = editor.toPlainText()
-        rows = []
-        prev_bottom = -2
+        rows: list = []
+        prev_text_bottom = None   # TEXT end of the last non-degenerate block
+        prev_row_bottom = None    # ROW bottom of the last painted row
         for block in editor._blocks:
             start = max(0, min(block.start_offset, len(text)))
             end = max(start, min(block.end_offset, len(text)))
@@ -116,13 +147,33 @@ class _BlockGutterWidget(QWidget):
             cur2 = QTextCursor(editor.document())
             cur2.setPosition(max(start, end - 1))
             y_bottom = editor.cursorRect(cur2).bottom()
-            # P3.41: anchor at the document position, never overlap the
-            # previous row, and always fit one full header line.
-            row_top = max(y_top, prev_bottom + 1)
+            # P3.44.9.1: stack ONLY on genuine degenerate adjacency —
+            # the block's text starts on the same/adjacent TEXT line as
+            # the previous block's text end (blank line removed, or a
+            # sentence pair sharing a wrapped line).
+            if (prev_text_bottom is not None
+                    and y_top <= prev_text_bottom + 1):
+                row_top = max(y_top, prev_row_bottom + 1)
+            else:
+                # Anchored at the block's own text start (viewport
+                # coordinates): the row moves with the text on scroll.
+                row_top = y_top
+            # P3.41: a row always fits one full header line.
             row_bottom = max(y_bottom, row_top + self.MIN_ROW_HEIGHT)
-            rows.append((block, row_top, row_bottom))
-            prev_bottom = row_bottom
-        return rows
+            rows.append([block, row_top, row_bottom])
+            prev_text_bottom = y_bottom
+            prev_row_bottom = row_bottom
+        # P3.44.9.1: monotonic trim — strictly disjoint rows without
+        # moving any row away from its own text anchor. Only fires on
+        # non-monotonic lazy-layout estimates (never on the settled
+        # layouts the P3.41 contract tests exercise).
+        for i in range(1, len(rows)):
+            prev_row, cur_row = rows[i - 1], rows[i]
+            if prev_row is None or cur_row is None:
+                continue
+            if cur_row[1] <= prev_row[2]:
+                rows[i - 1][2] = max(prev_row[1], cur_row[1] - 1)
+        return [tuple(r) if r is not None else None for r in rows]
 
     def paintEvent(self, event) -> None:
         editor = self._editor
@@ -484,6 +535,11 @@ class BlockAwarePlainTextEdit(CodeEditor):
         self._flash_timer = QTimer()
         self._flash_timer.setInterval(30)
         self._flash_timer.timeout.connect(self._on_flash_tick)
+        # P3.44.9.1: updateRequest (and therefore the overridden
+        # _update_line_number_area) already fires DURING base-class
+        # construction; the real gutter widget can only be created
+        # AFTER the base widget exists, so pre-seed None here.
+        self._block_gutter_widget: Optional[_BlockGutterWidget] = None
         super().__init__(parent)
         # Create a separate widget for the block gutter (like LineNumberArea).
         # The gutter CANNOT be painted on the viewport because the viewport
@@ -575,6 +631,29 @@ class BlockAwarePlainTextEdit(CodeEditor):
     def _update_line_number_area_width(self) -> None:
         """Override CodeEditor's slot to also recompute the block gutter."""
         self._update_margins()
+
+    def _update_line_number_area(self, rect: QRect, dy: int) -> None:
+        """P3.44.9.1: repaint the block gutter on the SAME updateRequest
+        path that keeps the LineNumberArea in sync with the viewport.
+
+        QPlainTextEdit emits ``updateRequest`` whenever the viewport
+        scrolls (and on edits/repaints). CodeEditor connects that signal
+        ONLY to the line-number area, so the block gutter kept showing
+        the rows of its LAST paint while the text scrolled away under
+        it — a frozen image. The gutter cannot use ``scroll(0, dy)``
+        like the line-number area because its rows are recomputed from
+        live ``cursorRect`` geometry on every paint, so a full
+        ``update()`` is the correct (and simplest) synchronisation: the
+        next paint re-anchors every row at its block's current text
+        position in viewport coordinates.
+
+        No timers, no polling — this rides the existing signal path
+        (the connection is made in CodeEditor.__init__ and resolves to
+        this override for BlockAwarePlainTextEdit instances).
+        """
+        super()._update_line_number_area(rect, dy)
+        if self._block_gutter_widget is not None:
+            self._block_gutter_widget.update()
 
     def _on_flash_tick(self) -> None:
         self._flash_alpha = max(0.0, self._flash_alpha - 0.035)
