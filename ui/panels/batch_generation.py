@@ -2881,6 +2881,53 @@ class BatchGenerationDialog(QDialog):
             self._refresh_table()
             self._update_summary()
             return
+        # P3.45.2A — manual-mode execution-run preflight. The whole
+        # queue is the run (start(reset_failed=True) resets SKIPPED/
+        # FAILED to PENDING), so every job that would execute is checked
+        # against its CURRENT prompt + CURRENT parameters through the
+        # single source in engine/output_guard. One confirmation listing
+        # the affected jobs; declining starts NOTHING (no job state,
+        # order, parameters or filenames are touched).
+        try:
+            from engine.batch_manager import JobStatus
+            from engine.output_guard import (
+                preflight_generation_size, preflight_summary_line,
+                PREFLIGHT_BLOCKED,
+            )
+            runnable = [j for j in self._manager.jobs
+                        if j.status in (JobStatus.PENDING, JobStatus.SKIPPED,
+                                        JobStatus.FAILED)]
+            flagged = []
+            any_blocked = False
+            for j in runnable:
+                verdict = preflight_generation_size(
+                    text=j.prompt,
+                    max_new_tokens=j.parameters.max_new_tokens,
+                )
+                if verdict["state"] != "safe":
+                    line = preflight_summary_line(
+                        verdict, j.name or j.prompt[:40])
+                    if line:
+                        flagged.append(line)
+                if verdict["state"] == PREFLIGHT_BLOCKED:
+                    any_blocked = True
+            if any_blocked:
+                reply = QMessageBox.question(
+                    self, "Oversized Jobs",
+                    "{0} of {1} jobs exceed the single-output generation "
+                    "limit:\n\n  {2}\n\n"
+                    "A single generation cannot produce more audio than "
+                    "the token budget allows — affected outputs would be "
+                    "cut at the limit, likely mid-speech.\n\n"
+                    "Start the batch anyway?".format(
+                        len(flagged), len(runnable), "\n  ".join(flagged)),
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No)
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+        except Exception:
+            pass
         ok = self._manager.start()
         if not ok:
             QMessageBox.information(self, "Already Running",
@@ -2914,6 +2961,31 @@ class BatchGenerationDialog(QDialog):
             return
         job = jobs[idx]
         is_part = getattr(job, "part_index", None) is not None
+        # P3.45.2A — preflight the job about to be regenerated (its
+        # CURRENT prompt and CURRENT parameters — a prompt/parameter edit
+        # made in this workspace is the basis). The verdict is folded
+        # into the EXISTING confirmation (no second modal): the user
+        # decides with full information, and the job itself is never
+        # rewritten or re-split here.
+        preflight_note = ""
+        try:
+            from engine.output_guard import (
+                preflight_generation_size, preflight_display_message,
+            )
+            verdict = preflight_generation_size(
+                text=job.prompt,
+                max_new_tokens=job.parameters.max_new_tokens,
+            )
+            if verdict["state"] == "blocked":
+                preflight_note = "\n\n⚠ PREFLIGHT (P3.45.2A):\n{0}".format(
+                    preflight_display_message(verdict, "This part"))
+            elif verdict["state"] == "warning":
+                preflight_note = (
+                    "\n\n⚠ PREFLIGHT (P3.45.2A): this part is exactly at "
+                    "the single-output limit (~{0:.0f}s) — no "
+                    "margin.".format(verdict["maximum_output_seconds"]))
+        except Exception:
+            pass
         if is_part:
             message = (
                 "Regenerate ONLY this part?\n\n"
@@ -2922,9 +2994,10 @@ class BatchGenerationDialog(QDialog):
                 "A NEW VERSIONED file will be created (e.g. v02); the\n"
                 "previous version's audio is kept on disk. Queue position\n"
                 "is preserved, so concatenation order is not affected.\n"
-                "Other parts are NOT re-generated.".format(
+                "Other parts are NOT re-generated.{2}").format(
                     job.name or job.prompt[:40],
-                    job.output_filename or "(auto)"))
+                    job.output_filename or "(auto)",
+                    preflight_note)
         else:
             message = (
                 "Regenerate ONLY this item?\n\n"
@@ -2932,9 +3005,10 @@ class BatchGenerationDialog(QDialog):
                 "  Output: {1}\n\n"
                 "The output file will be overwritten in place. Queue position\n"
                 "is preserved, so concatenation order is not affected. Other\n"
-                "items are NOT re-generated.".format(
+                "items are NOT re-generated.{2}").format(
                     job.name or job.prompt[:40],
-                    job.output_filename or "(auto)"))
+                    job.output_filename or "(auto)",
+                    preflight_note)
         reply = QMessageBox.question(
             self, "Regenerate Part", message,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,

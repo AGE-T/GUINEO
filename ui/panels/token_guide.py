@@ -297,7 +297,7 @@ A reset technika: új mondat kezdése új tokenekkel.
 <tr><td><b>temperature</b></td><td><b>1.2–1.4</b></td><td>Alacsonyabb temp kevésbé követi a tokeneket</td></tr>
 <tr><td><b>top_k</b></td><td><b>300</b></td><td>Széles sampling szükséges a tokenek érvényesüléséhez</td></tr>
 <tr><td><b>top_p</b></td><td><b>0.95</b></td><td>Több forrás is ezt ajánlja</td></tr>
-<tr><td><b>max_new_tokens</b></td><td><b>4096</b></td><td>Hosszabb generálásokhoz (≈30s audió)</td></tr>
+<tr><td><b>max_new_tokens</b></td><td><b>4096</b></td><td>Hosszabb generálásokhoz (25 fps audióval ~164s a felső korlát — P3.45.2A)</td></tr>
 <tr><td><b>dtype</b></td><td><b>bfloat16</b></td><td>float16 kevésbé stabil, ronthatja a token-követést</td></tr>
 <tr><td><b>append_silence</b></td><td><b>0.5–1.0s</b></td><td>Természetesebb mondatzárás</td></tr>
 </table>

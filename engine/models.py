@@ -47,7 +47,11 @@ class GenerationParameters:
     temperature: float = 1.3          # range 0.1 - 2.0, recommended 1.2-1.4
     top_p: float = 0.95               # range 0.1 - 1.0
     top_k: int = 300                  # range 1 - 500, recommended 300
-    max_new_tokens: int = 4096        # range 128 - 8192, 4096 ≈ 30s audio
+    max_new_tokens: int = 4096        # range 128 - 8192; 4096 tokens at the
+                                      # model's 25 fps audio frame rate is a
+                                      # ~163.84s single-output ceiling (see
+                                      # engine/output_guard.py — the previous
+                                      # "≈ 30s" note here was wrong)
     seed: Optional[int] = None        # None = random
     append_silence: float = 0.5       # seconds, range 0.0 - 5.0, recommended 0.5
     normalize_output: bool = False

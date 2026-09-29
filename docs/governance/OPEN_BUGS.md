@@ -2548,3 +2548,67 @@ estimate/duplication cleanup (P3.45).
   states read back).
 
 No backlog items were removed in this round.
+
+## P3.45.2A round — oversized block preflight (single-output ceiling)
+
+### P3.45.2A — Oversized generation requests bypassed every size check; truncation at the token ceiling is invisible (CLOSED for the UI generation paths)
+
+- **Status**: **CLOSED** by P3.45.2A (commit on `main`, see
+  DEVELOPMENT_LOG.txt P3.45.2A). The P3.45-GATE finding — "the real
+  oversized-part constraint is the `max_new_tokens/25fps` output
+  ceiling (default 4096 → 163.84 s); two silent bypasses exist; the
+  output guard cannot flag truncation at the ceiling" — now has a
+  BEFORE-generation classification layer:
+  `engine.output_guard.preflight_generation_size(text,
+  max_new_tokens)` (pure function; the ONE source of the ceiling
+  arithmetic, alongside the unchanged P3.27B post-generation guards).
+  SAFE / WARNING (exactly at the ceiling — no invented percentage
+  band) / BLOCKED (estimate above the ceiling), decided by exact
+  rational arithmetic (`chars*25` vs `tokens*15` — no float
+  equality), on the ACTUAL request basis (compiled prompt / part
+  text / job prompt) with the EFFECTIVE per-request token budget.
+  BLOCKED raises ONE truthful confirmation (default No) at: single
+  Generate, Generate Long preview (per-part ⚠ markers + Generate-click
+  re-check of the EDITED text — closes both splitter bypasses),
+  Batch manual start, Batch selective start (flagged jobs reported;
+  neighbours never corrupted), and the existing per-row regen
+  confirmation. Declining aborts before ANY mutation (scene status,
+  submission, queue, versions). NO auto-split, NO text/block/job
+  mutation anywhere (pinned by byte-identity tests). The misleading
+  "4096 ≈ 30s / 15s" comments are corrected in the three touched
+  places only. Full battery at the implementation commit: focused
+  42/42 (twice); frozen P3.45.1 + P3.44.9 + P3.44.9.1 + P3.27B +
+  P3.28 suites 210 passed + 35 subtests; full suite 1530 passed +
+  1 (SS-3, pre-existing) + 35 subtests; verify_compile 149/149;
+  architecture PASS; functional integrity 80/80; launch smoke 11/11.
+- **Residuals (recorded, NOT defects of this slice; each needs its
+  own decision before any change)**:
+  1. Direct `Engine.generate()` callers with no UI call site
+     (scripts, future automation) are not preflighted — the preflight
+     lives at the presentation/generation-entry layer where the user
+     decision point exists.
+  2. The estimate basis is the existing ~15 chars/sec heuristic
+     (consumed as-is, P3.45.2B territory): it can misclassify in
+     both directions; every message discloses which number is the
+     estimate and which is the real limit.
+  3. Post-generation truncation remains undetectable — the model API
+     returns only a waveform (no token/frame count, no finish
+     reason anywhere in the chain); P3.45.2A deliberately does not
+     fabricate an inference. If a future engine exposes metadata,
+     consume it explicitly (documented in the design record §7/§11).
+  4. WARNING has no softer band (e.g. "90 % of ceiling"): a
+     percentage threshold would be invented without data — remains
+     a later UX/data decision.
+  5. No model-specific limit API exists today; future backends with
+     different frame rates / per-model ceilings must be consumed
+     through the result's `effective_*` fields.
+- **Environment note (recorded)**: `test_p3_43_voice_unification.py`
+  and `test_p3_44_history_player_load.py` fail COLLECTION in the
+  current venv (`torch.__spec__ is None` after the house stub
+  install) — proven identical at baseline `2e2cb46` via `git stash`
+  (environment drift: torch is no longer importable; both files were
+  green in the P3.45.1-era environment). NOT a P3.45.2A regression;
+  restoring a torch-bearing venv (or enriching the two stubs with
+  `__spec__`) is an environment task, not a product change.
+
+No backlog items were removed in this round.

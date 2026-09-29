@@ -42,10 +42,22 @@ class LongNarrationDialog(QDialog):
                  default_voice_id: Optional[str] = None,
                  saved_speaker_map: Optional[dict] = None,
                  allow_sfx: bool = True,
-                 parent=None):
+                 parent=None,
+                 generation_parameters=None):
         super().__init__(parent)
         self._parts = list(parts)
         self._voice_name = voice_name
+        # P3.45.2A — the EFFECTIVE generation parameters for the upcoming
+        # request (passed by MainWindow; the max_new_tokens budget drives
+        # the single-output ceiling). None = the configured dataclass
+        # default (backwards-compatible with older callers/tests — the
+        # preflight itself resolves the default through the single source
+        # in engine/output_guard).
+        self._generation_parameters = generation_parameters
+        # P3.45.2A — per-part preflight verdicts (filled in _build_ui;
+        # safe default so _build_part_frame can never hit a missing
+        # attribute even if the preflight import fails).
+        self._preflight_verdicts: list = []
         self._voices = voices or []
         self._default_voice_id = default_voice_id
         # Previously-saved speaker→voice mapping (loaded from settings.json).
@@ -110,6 +122,44 @@ class LongNarrationDialog(QDialog):
                 Palette.TEXT_PRIMARY))
         header.setWordWrap(True)
         layout.addWidget(header)
+
+        # P3.45.2A — per-part oversized-request markers. Every part is
+        # classified against the single-output ceiling through the ONE
+        # source (engine/output_guard.preflight_generation_size) using
+        # the split-time part text — the SAME basis as the "~Xs" shown
+        # next to it (post-edit text is re-checked on Generate). Parts
+        # that cannot fit one output are visibly marked BEFORE the user
+        # commits; the effective limit line appears only when needed.
+        try:
+            from engine.output_guard import (
+                preflight_generation_size, PREFLIGHT_WARNING,
+                PREFLIGHT_BLOCKED,
+            )
+            self._preflight_verdicts = [
+                preflight_generation_size(
+                    text=(p.text or ""),
+                    max_new_tokens=(self._generation_parameters.max_new_tokens
+                                    if self._generation_parameters is not None
+                                    else None),
+                )
+                for p in self._parts
+            ]
+            flagged = [v for v in self._preflight_verdicts
+                       if v["state"] in (PREFLIGHT_WARNING,
+                                          PREFLIGHT_BLOCKED)]
+        except Exception:
+            self._preflight_verdicts = []
+            flagged = []
+        if flagged:
+            limit = flagged[0].get("maximum_output_seconds")
+            tokens = flagged[0].get("effective_max_new_tokens")
+            limit_note = QLabel(
+                "Single-output limit: ~{0:.0f}s (max_new_tokens={1}) — "
+                "parts marked ⚠ exceed it.".format(limit or 0, tokens or "?"))
+            limit_note.setStyleSheet(
+                "color: {0}; font-size: 11px;".format(Palette.WARNING))
+            limit_note.setWordWrap(True)
+            layout.addWidget(limit_note)
 
         # --- Info label ---
         if is_multi:
@@ -405,6 +455,25 @@ class LongNarrationDialog(QDialog):
 
         header_text += "  |  {0} chars".format(part.char_count)
 
+        # P3.45.2A — oversized-part marker (split-time basis, same basis
+        # as the "~Xs" above; verdicts computed once in _build_ui).
+        verdict = (self._preflight_verdicts[index]
+                   if index < len(self._preflight_verdicts) else None)
+        if verdict and verdict.get("state") in ("warning", "blocked"):
+            limit = verdict.get("maximum_output_seconds") or 0.0
+            est = verdict.get("estimated_request_seconds") or 0.0
+            if verdict.get("state") == "warning":
+                marker = ('<span style="color:{0}; font-weight:bold;">'
+                          "⚠ ~{1:.0f}s — exactly at the ~{2:.0f}s "
+                          "single-output limit</span>").format(
+                              Palette.WARNING, est, limit)
+            else:
+                marker = ('<span style="color:{0}; font-weight:bold;">'
+                          "⚠ ~{1:.0f}s exceeds the ~{2:.0f}s single-output "
+                          "limit</span>").format(
+                              Palette.WARNING, est, limit)
+            header_text += '  |  {0}'.format(marker)
+
         header = QLabel(header_text)
         header.setTextFormat(Qt.TextFormat.RichText)
         header.setStyleSheet(
@@ -524,6 +593,60 @@ class LongNarrationDialog(QDialog):
 
         if not parts:
             return
+
+        # P3.45.2A — Generate-click preflight on the EDITED text (the
+        # header markers reflect split-time text; this re-check closes
+        # the edit gap truthfully: the basis is what will actually be
+        # sent). One confirmation listing the affected parts; declining
+        # keeps the dialog open — nothing was emitted, nothing mutated.
+        # Warning-only parts are already informed via the header markers
+        # and do not raise a modal (documented P3.45.2A residual).
+        try:
+            from engine.output_guard import (
+                preflight_generation_size, preflight_summary_line,
+                PREFLIGHT_BLOCKED,
+            )
+            flagged = []
+            any_blocked = False
+            for p in parts:
+                verdict = preflight_generation_size(
+                    text=(p.text or ""),
+                    max_new_tokens=(
+                        self._generation_parameters.max_new_tokens
+                        if self._generation_parameters is not None
+                        else None),
+                )
+                if verdict["state"] == PREFLIGHT_BLOCKED:
+                    any_blocked = True
+                    # Identity lookup — SplitPart is a dataclass (value
+                    # equality), duplicate parts must not mislabel.
+                    num = next((i + 1 for i, orig in enumerate(self._parts)
+                                if orig is p), None)
+                    label = "Part {0}".format(num) if num else "Part"
+                    if p.speaker:
+                        label = "{0} (🎙 {1})".format(label, p.speaker)
+                    line = preflight_summary_line(verdict, label)
+                    if line:
+                        flagged.append(line)
+            if any_blocked:
+                from PySide6.QtWidgets import QMessageBox
+                reply = QMessageBox.question(
+                    self, "Oversized Parts",
+                    "{0} of {1} parts exceed the single-output generation "
+                    "limit:\n\n  {2}\n\n"
+                    "A single generation cannot produce more audio than "
+                    "the token budget allows — affected outputs would be "
+                    "cut at the limit, likely mid-speech.\n\n"
+                    "You can cancel and edit the affected parts below, or "
+                    "use smaller parts.\n\nGenerate anyway?".format(
+                        len(flagged), len(parts), "\n  ".join(flagged)),
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No)
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+        except Exception:
+            pass
 
         # Log each part's final prompt before emitting — for debugging.
         import logging

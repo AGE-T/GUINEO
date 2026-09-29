@@ -556,7 +556,7 @@ class GenerationSection(QWidget):
         self._max_tokens.setSingleStep(256)
         self._max_tokens.setStepType(QSpinBox.StepType.DefaultStepType)
         self._max_tokens.setCorrectionMode(QSpinBox.CorrectionMode.CorrectToPreviousValue)
-        self._max_tokens.setToolTip("Max tokens generated.\nHigher = longer speech.\n2048 ≈ 7.5s, 4096 ≈ 15s, 8192 ≈ 30s\nRecommended: 4096")
+        self._max_tokens.setToolTip("Max tokens generated.\nHigher = longer speech.\nAudio is generated at 25 frames/sec, so the\nsingle-output ceiling is max_new_tokens / 25:\n2048 ≈ 82s, 4096 ≈ 164s, 8192 ≈ 328s\nRecommended: 4096 (P3.45.2A)")
         self._max_tokens.valueChanged.connect(lambda v: self.parameters_changed.emit())
         layout.addWidget(self._max_tokens)
 

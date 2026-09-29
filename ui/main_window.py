@@ -2414,6 +2414,58 @@ class MainWindow(QMainWindow):
             project=self._current_project,
         )
 
+        # P3.45.2A — oversized-request preflight (single-output ceiling).
+        # The classification and the hard-limit arithmetic live in ONE
+        # place (engine/output_guard.preflight_generation_size); this call
+        # site only supplies the ACTUAL request basis (the compiled
+        # prompt) and the EFFECTIVE parameters, then surfaces the
+        # verdict. BLOCKED = the request cannot fit one model output —
+        # the user must acknowledge before anything is submitted.
+        # WARNING = exactly at the ceiling (no margin) — informational
+        # only. Either way the request is NEVER rewritten or split here,
+        # and an abort happens BEFORE any state mutation (scene status,
+        # submission, history).
+        try:
+            from engine.output_guard import (
+                preflight_generation_size, preflight_display_message,
+                PREFLIGHT_BLOCKED, PREFLIGHT_WARNING,
+            )
+            preflight = preflight_generation_size(
+                text=final_prompt,
+                max_new_tokens=request.parameters.max_new_tokens,
+            )
+            if preflight["state"] == PREFLIGHT_BLOCKED:
+                reply = QMessageBox.question(
+                    self, APP_NAME, preflight_display_message(preflight)
+                    + "\n\nGenerate anyway?",
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No)
+                if reply != QMessageBox.StandardButton.Yes:
+                    logger.info(
+                        "PREFLIGHT P3.45.2A: single generation declined "
+                        "by user (est=%ss ceiling=%ss chars=%s)",
+                        preflight.get("estimated_request_seconds"),
+                        preflight.get("maximum_output_seconds"),
+                        preflight.get("basis_chars"))
+                    return
+                logger.info(
+                    "PREFLIGHT P3.45.2A: oversized single generation "
+                    "acknowledged by user — proceeding unchanged "
+                    "(est=%ss ceiling=%ss)",
+                    preflight.get("estimated_request_seconds"),
+                    preflight.get("maximum_output_seconds"))
+            elif preflight["state"] == PREFLIGHT_WARNING:
+                self._status_bar.showMessage(
+                    "Note: this prompt is exactly at the single-output "
+                    "limit (~{0:.0f}s). Generation proceeds with no "
+                    "margin.".format(preflight["maximum_output_seconds"]),
+                    8000)
+        except Exception:
+            # A preflight failure must never block a normal generation
+            # (the same defensive posture as the P3.27B output guard).
+            logger.debug("PREFLIGHT P3.45.2A: unavailable", exc_info=True)
+
         # P2.6: Set scene context on the request so HistoryEntry can carry it.
         # P2.8: Set scene status to "generating".
         if self._active_scene is not None:
@@ -3345,10 +3397,15 @@ class MainWindow(QMainWindow):
             pass
 
         # Show preview dialog — the dialog handles speaker→voice mapping UI.
+        # P3.45.2A: the EFFECTIVE generation parameters are passed so the
+        # dialog's per-part preflight markers use the actual request budget
+        # (max_new_tokens is user-editable per request; the single source
+        # of the limit math stays in engine/output_guard).
         from ui.panels.long_narration_dialog import LongNarrationDialog
         dialog = LongNarrationDialog(
             parts, voice_name, voices, voice_id, saved_speaker_map,
-            allow_sfx=params.allow_sfx, parent=self)
+            allow_sfx=params.allow_sfx, parent=self,
+            generation_parameters=params)
 
         def _on_generate_with_save(edited_parts, speaker_voice_map):
             # Save the speaker→voice mapping so it persists across dialog reopens.
@@ -3972,6 +4029,63 @@ class MainWindow(QMainWindow):
                 "No parts are selected.\n\nCheck at least one part to "
                 "generate.")
             return
+
+        # P3.45.2A — execution-run preflight. BEFORE any version
+        # allocation or status reset: a declined confirmation leaves the
+        # queue, slot ids, versions, parameters and edits byte-identical
+        # (the "no mutation" contract). Affected jobs are REPORTED (one
+        # confirmation listing them) rather than silently blocked or
+        # removed — the user can cancel, uncheck the affected parts and
+        # generate the rest. The check uses each job's CURRENT prompt and
+        # CURRENT parameters (edits made in the batch workspace are the
+        # basis), all through the single source in output_guard.
+        try:
+            from engine.output_guard import (
+                preflight_generation_size, preflight_summary_line,
+                PREFLIGHT_BLOCKED,
+            )
+            flagged = []
+            any_blocked = False
+            for idx in sorted(checked):
+                job = jobs[idx]
+                verdict = preflight_generation_size(
+                    text=job.prompt,
+                    max_new_tokens=job.parameters.max_new_tokens,
+                )
+                if verdict["state"] != "safe":
+                    line = preflight_summary_line(verdict, job.name
+                                                 or "Part {0}".format(idx + 1))
+                    if line:
+                        flagged.append(line)
+                if verdict["state"] == PREFLIGHT_BLOCKED:
+                    any_blocked = True
+            if any_blocked:
+                reply = QMessageBox.question(
+                    self, APP_NAME,
+                    "{0} of {1} selected parts exceed the single-output "
+                    "generation limit:\n\n  {2}\n\n"
+                    "A single generation cannot produce more audio than "
+                    "the token budget allows — affected outputs would be "
+                    "cut at the limit, likely mid-speech.\n\n"
+                    "You can cancel, uncheck the affected parts, and "
+                    "generate the rest.\n\nStart this generation run "
+                    "anyway?".format(
+                        len(flagged), len(checked), "\n  ".join(flagged)),
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No)
+                if reply != QMessageBox.StandardButton.Yes:
+                    logger.info(
+                        "PREFLIGHT P3.45.2A: selective run declined by "
+                        "user (%d flagged of %d selected)",
+                        len(flagged), len(checked))
+                    return
+                logger.info(
+                    "PREFLIGHT P3.45.2A: selective run with oversized "
+                    "parts acknowledged by user — proceeding unchanged "
+                    "(%d flagged)", len(flagged))
+        except Exception:
+            logger.debug("PREFLIGHT P3.45.2A: unavailable", exc_info=True)
 
         scene = None
         run_id = None

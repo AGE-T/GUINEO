@@ -3877,3 +3877,156 @@ frissítési pontok táblázata; tesztek; validációs táblázat;
 fagyasztott-regresszió-ellenőrzés; határkapu; kockázatok; fájlok).
 OPEN_BUGS.md: P3.45.1 szakasz. A P3.45.1 ITT ÁLL MEG — a P3.45.2
 NEM kezdődött el.
+
+P3.45.2A — TÚLMÉRETEZETT BLOKK ELŐFELSZÁRÍTÁS (oversized preflight)
+(bizonyíték-először, minimális változás, estimator NEM érintve)
+════════════════════════════════════════════════════════════════════
+DÁTUM: 2026-09-29
+ALAP: main @ 2e2cb46 (P3.45.1 kész; P3.44.9 és P3.44.9.1 fagyasztva;
+origin/main == local main, ellenőrizve).
+
+FELADAT: a P3.45.2 szándékosan két önállóan validált részre van
+szakítva — A: oversized-block ELŐFELSZÁRÍTÁS (ez a menet), B: Duration
+Estimation Consistency (TILOS volt megkezdeni). A cél: a túlméretes
+generálási kérés ne okozzon csendben tördelt/túl rövid kimenetet — a
+felhasználó a generálás ELŐTT kapja a tényt, ahol az architektúra
+lehetővé teszi. Az előfelásmérés OSZTÁLYOZÓ réteg, NEM tartalom-
+módosító réteg: semmilyen szöveget, blokkot, mondat-határt, slot_id-t,
+Scene/Batch-struktúrát nem ír át (nincs auto-split).
+
+GYÖKÉROK: SEMMI sem hasonlította össze a kért szöveget az egymenetes
+kimeneti plafonnal. A modell 25 fps-en autoregresszívan generál és a
+max_new_tokens költségkeretnél megáll: 4096 token / 25 fps = 163.84 s
+az EGY hívás kimeneti felső korlátja (alapkonfiguráció). A ennél
+hosszabb szöveget igénylő kérés csendben beszakad a keretnél
+(mondat közben), a P3.27B utó-őrszem (R1/R2/R3) pedig NEM látja: mind
+három szabály a VÁRTNÁL HOSSZABB kimenetre tüzel — a csonkolt kimenet
+rövidebb. Két ismert bypass (a current HEAD-en újravizsgálva): A) az
+egyedüli, MAX_CHARS-t (400) meghaladó mondat saját part lesz és sosem
+vágódik szét (narration_splitter _group_sentence_units); B) a
+$SPEAKER-turn egy part, szintén újrachunkolás nélkül — mindkettő
+ellenőrizetlenül ért el a motorhoz.
+
+TECHNIKAI KORLÁT (egyetlen igazságforrás): engine/output_guard.py —
+preflight_generation_size(text, max_new_tokens) tiszta függvény;
+plafon = effective_max_new_tokens / HIGGS_FRAME_RATE. Az effective érték
+a VALÓDI kérés-paraméter (request.parameters.max_new_tokens /
+job.parameters.max_new_tokens — a vezérlőpult spinboxa és a Batch
+munkaterület szerkesztheti); paraméter nélkül a GenerationParameters
+dataclass alapértéke (4096) feloldásra a függvényben (nem második
+konstans). A becslés alapja a meglévő ~15 karakter/másodperc heurisztika
+(a splitter SplitPart.estimated_duration ugyanez a szám — FOGYASZTÁS,
+nem újratervezés; P3.45.2B területe érintetlen). Határszerződés
+determinisztikus, abszolút racionális számítás (fractions.Fraction,
+nincs lebegőpontos egyenlőség): blocked ⇔ chars*25 > tokens*15;
+warning ⇔ chars*25 == tokens*15 (pontosan a plafonon — NEM találtunk ki
+új százalék-küszöböt: a feladat tiltja; a 4096-tokenes szoros pár 2457
+(biztonságos) / 2458 (blokkolt); pontos warning-pár: 2460 karakter @
+4100 token). Strukturált eredmény-diktátum (state, reasons,
+effective_max_new_tokens, effective_fps, maximum_output_seconds,
+estimated_request_seconds, input_basis, basis_chars, chars_per_second,
+parts_required, display_message) — a P3.27B dict-minta újrafelhasználása,
+NEM új osztály. A három fogalom szigorúan szétválasztva: szöveg-idő-
+becslés (heurisztika, fogyasztva) / motor-maximum (a kemény műszaki
+korlát — a preflight tárgya) / valós generált hossz (utó-kori bizonyíték,
+sosem helyettesíti a preflightet).
+
+CSONKOLÁSI METAADAT: a generate_speech() CSAK waveform-ot ad vissza; a
+GenerationResult-ban nincs token/frame-szám, finish_reason vagy
+completion-ok — a láncban SEHOL nincs explicit csonkolási metaadat, ezért
+P3.45.2A tudatosan NEM gyártott törékeny hossz-alapú következtetést
+(rögzítő teszt: a result nem nöhet kitalált mezőket). A preflight a
+MEGJÓSOLHATÓ túlcsordulást akadályozza meg; a P3.27B őrszem szerepe
+változatlan.
+
+IMPLEMENTÁCIÓ (egy igazságforrás, négy bekötési pont, P3.27B védelmi
+testtartás — import/kivételhiba sosem blokkolhat normál generálást):
+1) engine/output_guard.py: a preflight-mag + display_message +
+   summary_line (egyetlen UI-szöveg-forrás).
+2) MainWindow._start_generation: a VÉGLEGES promptra + effektív
+   paraméterre fut (a kérés felépítése UTÁN, bármilyen státusz-mutáció
+   ELŐTT); BLOCKED → EGY megerősítés (alap: Nem) — elutasítás esetén
+   semmi sem kerül beadásra; WARNING → státuszsor-jegyzet.
+3) LongNarrationDialog: opcionális generation_parameters ctor-arg
+   (None → alapérték, visszamenőleg kompatibilis); rész-fejléc-jelölők
+   (⚠ ~Xs túllépi / pontosan eléri a ~Ns korlátot) + limit-sor a
+   _build_ui-ban (split-idejű szöveg); a Generate-kattintás a SZERKESZTETT
+   szöveget nézi újra (egy megerősítés az érintett partokkal; elutasítás
+   esetén a dialógus nyitva marad, semmit sem emittál).
+4) Batch: kézi start (_on_start) — a futó halmaz minden jobját
+   (PENDING/SKIPPED/FAILED, a start(reset_failed=True) szemantikája
+   szerint) ellenőrzi az AKTUÁLIS prompt+paraméter alapján; szelektív
+   start (_on_generate_selected) — a BEJELÖLT jobok; regenerálás
+   (_on_regen) — az ítélet a MEGLEVŐ megerősítés szövegébe van hajtva
+   (nincs második modal). Batch-szinten egyetlen megerősítés jelenti az
+   érintett jobokat (nem blokkolja a sort, nem veszi ki a jobokat — a
+   felhasználó lemondhatja, kiveheti a partokat és generálhatja a
+   többit); elutasítás → a munkaterület bájt-azonos marad (munka-
+   sorrend, slot_id, prompt/paraméter-szerkesztések, verziók, Start/
+   Stop/Pause szemantika érintetlen). A be nem jelölt blokkolt job nem
+   akadályozza a futást.
+
+MEGTÉVEDT LEÍRÁS JAVÍTÁSA (csak ahol a feladat érinti): models.py
+"4096 ≈ 30s" mező-megjegyzés, vezérlőpult tooltip ("2048 ≈ 7.5s, 4096 ≈
+15s" — mindkettő hibás volt), token-guide egy sora — a valódi 25 fps
+plafonra (2048≈82s / 4096≈164s / 8192≈328s) javítva. Kapcsolatlan
+helyeken NEM történt takarítás.
+
+TESZTEK: tests/test_p3_45_2a_oversized_block_preflight.py — 42 teszt,
+valódi MainWindow+Engine+splitter+dialógus+Batch a tényleges alkalmazási
+útvonalakon (motor-határ fake, house-minta). A 12 előírt kategória:
+alatt/rajta/felett a kemény korlátnak (pontos egész-párok), túl hosszú
+egyetlen mondat, speaker-turn, eltérő effektív max_new_tokens (2048/
+4100/4096/8192 + a vezérlőpult-spinbox valódi útvonala), nincs-mutáció
+(bájt-azonos jobok/slotok/scene-státusz/blokkok), normál generálás
+regressziója, Batch-regresszió (biztonságos + blokkolt + szomszéd-
+sértetlenség), meglévő őrszem-regresszió (R1/R2/R3 zöld), csonkolási
+határ-szemantika (nincs kitalált metaadat — rögzítve), legacy
+konfiguráció (paraméter nélküli ctor; preset-alapú keret). Modal-
+rögzítőn (QMessageBox.question) keresztül az ÜZENET-TARTALOM-tényeket
+bizonyítja (igaz számok), nem csak a hívás megtörténtét.
+
+VALIDÁCIÓ (a implementációs commiton): fókusz P3.45.2A 42/42 (kétszer
+futtatva — stabil); P3.45.1 + P3.44.9 + P3.44.9.1 + P3.27B őrszem +
+P3.28 provenance fókusz 210 passed + 35 subtest; TELJES akku 6 előtéri
+darabban: 1530 passed + 1 failed (SS-3, a dokumentált, preregisztrált
+P3.37 README-teszt — a pristin fán azonosan elbukik) + 35 subtest;
+környezeti megjegyzés (dokumentált eltérés): test_p3_43_voice_
+unification.py és test_p3_44_history_player_load.py kollekció-hiba ebben
+a venv-ben (torch.__spec__ is None a house-stub után) — git stash-sel
+BIZONYITOTTAN az alapon (2e2cb46) is azonos, vagyis környezet-drift (a
+torch a venvből időközben kikerült), NEM P3.45.2A-regresszió; a P3.45.1
+kori környezetben zöldek voltak. verify_compile 149/149; verify_
+architecture PASS; verify_functional_integrity 80/80; launch smoke
+11/11 a valódi belépési útvonalon (ss-audit/p3452a_launch_smoke.py,
+nem commitált próba).
+
+MARADANDÓ KOCKÁZATOK (csak bizonyítottak): 1) a WARNING-sáv pontosan-a-
+plafonon értelmű — puhább előre-jelző küszöb (pl. a plafon 90%-a) későbbi
+UX/adat-döntés, tudatosan nem találtunk ki; 2) nincs modell-specifikus
+limit-API — ha egy jövőbeli backend más frame-rate-et / per-modell
+token-plafont ad, az effective_* mezőkön át kell fogyasztani (a
+szerződés már hordozza őket); 3) a hosszú-dialógus WARNING-partja nem
+emel modalt (fejléc-jelölő only — a számok már leírják a nulla
+biztonsági rést); 4) a /15 heurisztika mindkét irányban tévedhet — minden
+üzenet kimondja, melyik szám becslés és melyik a valódi korlát; 5) a
+motor-határon túli közvetlen Engine.generate()-hívók (szkriptek, jövőbeli
+automatizálás) nincsenek előfelásmérve — a preflight ott él, ahol a
+felhasználói döntési pont létezik.
+
+HATÁRKAPU-ELLENŐRZÉS: nincs estimator-újratervezés; nincs /15-
+képletváltozás (csak fogyasztás); nincs preview-estimator-átírás; nincs
+Assemble-időszakasz-szemantika-változás; nincs auto-split; nincs blokk-
+mutáció; nincs új azonosítás-rendszer; nincs slot_id-változás; nincs
+GenerationPlan; nincs fingerprint; nincs STALE; nincs session-locking;
+nincs Batch-architektúra-átírás; nincs Scene Combine-átírás; nincs
+Manual Concatenate-átírás; nincs P3.44.9-változás; nincs P3.44.9.1-
+geometriai változás; nincs időzítő; nincs lekérdezés; nincs kapcsolatlan
+renderelés-refaktor. A P3.45.2B NEM kezdődött el.
+
+DOKUMENTÁCIÓ: docs/design/P3_45_2A_OVERSIZED_BLOCK_PREFLIGHT.md (12
+szakasz: állapot; gyökérok; technikai korlát; szerződés; implementáció;
+védett útvonalak; maradó bypassok; tesztek; validáció; határkapu;
+kockázatok; fájlok). OPEN_BUGS.md: P3.45.2A szakasz. A P3.45.2A ITT
+ÁLL MEG — a P3.45.2B (Duration Estimation Consistency) és a P3.45.3
+NEM kezdődött el.

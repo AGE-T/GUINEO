@@ -1,9 +1,10 @@
 """
-SpeechStudio Engine - Output Guard (P3.27B)
-============================================
+SpeechStudio Engine - Output Guard (P3.27B) + Generation Preflight (P3.45.2A)
+==============================================================================
 
-Runtime safety detection for pathological generation outputs, plus the
-Generate Long part-filename version allocator.
+Runtime safety detection for pathological generation outputs, the
+BEFORE-generation oversized-request preflight, plus the Generate Long
+part-filename version allocator.
 
 WHY THIS MODULE EXISTS (P3.27B defect):
     The Higgs Audio V3 model generates audio autoregressively at 25 fps
@@ -84,6 +85,253 @@ ANOMALY_SILENT_MIN_TOTAL_S = 5.0
 
 # Frame-level "speech present" threshold for the trailing-silence scan.
 FRAME_RMS_THRESHOLD_DBFS = -50.0
+
+
+# ---------------------------------------------------------------------------
+# P3.45.2A — Oversized generation-request preflight (BEFORE generation)
+# ---------------------------------------------------------------------------
+# The output ceiling of ONE generation call, derived from the ACTUAL request
+# parameters (NOT from any character-count invention):
+#
+#     effective max_new_tokens / HIGGS_FRAME_RATE (25 fps)
+#     default 4096 tokens  ->  163.84 s
+#
+# The model generates audio autoregressively at 25 fps and stops at the
+# max_new_tokens budget. A request whose text needs MORE audio than that
+# cannot be produced by a single call: the output is cut at the token
+# budget (mid-speech truncation) or the model runs to the budget and fails
+# to terminate (the P3.27B runaway-tail pathology detected by R1 above).
+#
+# PREFLIGHT vs the P3.27B anomaly detector above:
+#   - detect_output_anomaly() runs POST-generation on the raw waveform
+#     (R1/R2/R3 — conservative, flag-only, never trims).
+#   - preflight_generation_size() runs PRE-generation on the request text
+#     and classifies the request as SAFE / WARNING / BLOCKED against the
+#     single-output ceiling.
+#   Both share HIGGS_FRAME_RATE and the token-ceiling arithmetic; this
+#   function is the ONE pre-generation source of truth for the hard
+#   limit. UI layers (editor / Long Narration dialog / Batch / regen /
+#   single Generate) must CALL it — never re-derive the math locally.
+#
+# Text-duration basis: the project's EXISTING heuristic of ~15 characters
+# per second of audio — the SAME figure NarrationSplitter uses for
+# SplitPart.estimated_duration at its four split sites. This is P3.45.2A
+# CONSUMPTION of the existing heuristic, not a redesign: the heuristic
+# itself, the preview estimator displays and Assemble duration labels
+# belong to P3.45.2B and remain untouched. The basis actually used is
+# reported in the result (input_basis / basis_chars) so no caller can
+# misrepresent an estimate as a measurement.
+#
+# No WARNING percentage band is invented (task rule: no arbitrary
+# thresholds). WARNING means EXACTLY at the ceiling — the only boundary
+# that is technically derivable without new data. A softer warning
+# threshold remains a later UX/data decision.
+
+# The existing house heuristic (chars per second of speech) — see above.
+ESTIMATED_CHARS_PER_SECOND = 15.0
+
+# Preflight states (P3.45.2A contract):
+PREFLIGHT_SAFE = "safe"          # estimate below the ceiling
+PREFLIGHT_WARNING = "warning"    # estimate EXACTLY at the ceiling (no margin)
+PREFLIGHT_BLOCKED = "blocked"    # estimate above the ceiling (cannot fit)
+
+
+def preflight_generation_size(
+    text: Optional[str] = None,
+    max_new_tokens: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Classify a generation request against the single-output ceiling.
+
+    Pure function (no Qt, no engine state, no disk) — the pre-generation
+    counterpart of detect_output_anomaly(). Answers:
+
+        "Can this exact generation request be expected to fit within the
+         engine's real output constraint?"
+
+    Args:
+        text: the request's text basis (the ACTUAL text about to be sent:
+              the compiled prompt for single Generate, the part text for
+              Generate Long parts, the job prompt for Batch jobs). When
+              None, nothing can be classified and the verdict is SAFE
+              with a "no basis" note (evidence-first: never block
+              without a basis).
+        max_new_tokens: the EFFECTIVE token budget for this request
+              (request.parameters.max_new_tokens — per-request, per-job,
+              user-editable in several places). When None, the
+              GenerationParameters dataclass default is used (the single
+              configured source; NOT a second constant).
+
+    Boundary contract (deterministic, no floating-point equality):
+        estimated = chars / 15.0 and ceiling = tokens / 25.0 are compared
+        through exact rational arithmetic (fractions.Fraction), i.e. as
+        the exact reals chars/15 and tokens/25:
+            BLOCKED  iff chars * 25 >  tokens * 15   (exact integers)
+            WARNING  iff chars * 25 == tokens * 15   (exact integers)
+            SAFE     otherwise
+        Example boundary: 2460 chars and 4100 tokens are both exactly
+        164.0 s (2460*25 == 4100*15) → WARNING. 2461 chars → BLOCKED.
+
+    Returns a structured dict (NEVER a formatted UI string alone):
+        state:                     "safe" | "warning" | "blocked"
+        reasons:                   uman-readable, ...] (empty when safe)
+        effective_max_new_tokens:  int  (the value actually used)
+        effective_fps:             25   (HIGGS_FRAME_RATE)
+        maximum_output_seconds:    float (tokens / 25, rounded 2dp)
+        estimated_request_seconds: float | None (chars / 15, rounded 2dp)
+        input_basis:               "text_length" | "none"
+        basis_chars:               int | None
+        chars_per_second:          15.0 (the existing heuristic constant)
+        parts_required:            int | None — ceil(estimated / ceiling)
+                                   when a basis exists (the minimum number
+                                   of outputs this text would need at the
+                                   current ceiling; informational only —
+                                   P3.45.2A NEVER splits anything)
+        display_message:           single-source UI text ("" when safe)
+
+    The caller decides what to do with the verdict; this function never
+    mutates any text, block, job or parameter.
+    """
+    from fractions import Fraction
+
+    # Effective token budget: the request's value when supplied, else the
+    # configured dataclass default (single source of truth — models.py).
+    if max_new_tokens is None:
+        from engine.models import GenerationParameters
+        max_new_tokens = GenerationParameters().max_new_tokens
+    max_new_tokens = int(max_new_tokens)
+    ceiling_s = max_new_tokens / float(HIGGS_FRAME_RATE)
+
+    chars = len(text) if text is not None else None
+    estimated_s = (chars / ESTIMATED_CHARS_PER_SECOND
+                   if chars is not None else None)
+
+    state = PREFLIGHT_SAFE
+    reasons: List[str] = []
+    parts_required = None
+    input_basis = "none"
+
+    if chars is None:
+        reasons.append(
+            "no text basis supplied — the request was not classified "
+            "against the output ceiling")
+    else:
+        input_basis = "text_length"
+        # Exact rational comparison: chars/15 vs tokens/25 as exact reals
+        # (both denominators are exact small integers, so Fraction
+        # arithmetic decides the boundary without float equality).
+        est_frac = Fraction(chars) / Fraction(ESTIMATED_CHARS_PER_SECOND)
+        ceil_frac = Fraction(max_new_tokens, HIGGS_FRAME_RATE)
+        # Minimum number of outputs this text would need at the current
+        # ceiling — exact ceiling division on rationals (informational
+        # only: P3.45.2A NEVER splits anything).
+        parts_required = int(-(-est_frac // ceil_frac))
+        if est_frac > ceil_frac:
+            state = PREFLIGHT_BLOCKED
+            reasons.append(
+                "estimated output {0:.1f}s exceeds the single-output "
+                "ceiling {1:.1f}s (max_new_tokens={2} at {3} fps)".format(
+                    estimated_s, ceiling_s, max_new_tokens,
+                    HIGGS_FRAME_RATE))
+        elif est_frac == ceil_frac:
+            state = PREFLIGHT_WARNING
+            reasons.append(
+                "estimated output {0:.1f}s is EXACTLY the single-output "
+                "ceiling {1:.1f}s — no margin (max_new_tokens={2} at "
+                "{3} fps)".format(
+                    estimated_s, ceiling_s, max_new_tokens,
+                    HIGGS_FRAME_RATE))
+
+    result: Dict[str, Any] = {
+        "state": state,
+        "reasons": reasons,
+        "effective_max_new_tokens": max_new_tokens,
+        "effective_fps": HIGGS_FRAME_RATE,
+        "maximum_output_seconds": round(ceiling_s, 2),
+        "estimated_request_seconds": (round(estimated_s, 2)
+                                      if estimated_s is not None else None),
+        "input_basis": input_basis,
+        "basis_chars": chars,
+        "chars_per_second": ESTIMATED_CHARS_PER_SECOND,
+        "parts_required": parts_required,
+    }
+    result["display_message"] = preflight_display_message(result)
+    return result
+
+
+def preflight_display_message(
+    result: Optional[Dict[str, Any]],
+    item_label: str = "This request",
+) -> str:
+    """Human-readable multi-line message for one preflight verdict.
+
+    Single-source UI text (the anomaly_warning_text precedent): call
+    sites pass the result and an item label ("Part 3", "CAPTAIN: 2",
+    "This block", ...) instead of re-formatting the numbers. Returns ""
+    for SAFE / missing results — a safe request produces no UI noise.
+    """
+    if not result or result.get("state") == PREFLIGHT_SAFE:
+        return ""
+    est = result.get("estimated_request_seconds")
+    ceil_s = result.get("maximum_output_seconds")
+    tokens = result.get("effective_max_new_tokens")
+    fps = result.get("effective_fps")
+    chars = result.get("basis_chars")
+    parts = result.get("parts_required")
+    est_txt = ("~{0:.0f}s".format(est) if est is not None else "(no estimate)")
+    chars_txt = (" ({0} chars at ~{1:.0f} chars/sec)".format(
+        chars, result.get("chars_per_second", ESTIMATED_CHARS_PER_SECOND))
+        if chars is not None else "")
+    if result.get("state") == PREFLIGHT_BLOCKED:
+        msg = (
+            "{label} may exceed the generation limit.\n\n"
+            "Estimated output: {est}{chars}\n"
+            "Effective maximum output: ~{ceil:.0f}s ({tokens} tokens at "
+            "{fps} frames/sec)\n\n"
+            "A single generation cannot produce more audio than the token "
+            "budget allows — the output would stop at ~{ceil:.0f}s, likely "
+            "cutting the speech. {parts}\n"
+            "The estimate is heuristic (character-based); the maximum is "
+            "the real technical limit.").format(
+                label=item_label, est=est_txt, chars=chars_txt,
+                ceil=ceil_s, tokens=tokens, fps=fps,
+                parts=("This text would need at least {0} parts to fit "
+                       "the limit.".format(parts)
+                       if parts else ""))
+        return msg
+    # WARNING — exactly at the ceiling.
+    return (
+        "{label} is exactly at the generation limit.\n\n"
+        "Estimated output: {est}{chars}\n"
+        "Effective maximum output: ~{ceil:.0f}s ({tokens} tokens at "
+        "{fps} frames/sec)\n\n"
+        "There is no margin — the model may stop at the token budget "
+        "before finishing the text. The estimate is heuristic "
+        "(character-based).").format(
+            label=item_label, est=est_txt, chars=chars_txt,
+            ceil=ceil_s, tokens=tokens, fps=fps)
+
+
+def preflight_summary_line(
+    result: Optional[Dict[str, Any]],
+    item_label: str,
+) -> str:
+    """One-line summary for listings (batch confirmations, part lists).
+
+    Example: ``Part 3: ~200s estimated vs ~164s limit (needs >= 2 parts)``.
+    Returns "" for SAFE / missing results.
+    """
+    if not result or result.get("state") == PREFLIGHT_SAFE:
+        return ""
+    est = result.get("estimated_request_seconds")
+    ceil_s = result.get("maximum_output_seconds")
+    parts = result.get("parts_required")
+    est_txt = "~{0:.0f}s".format(est) if est is not None else "?"
+    tail = (" (needs >= {0} parts)".format(parts) if parts else "")
+    if result.get("state") == PREFLIGHT_BLOCKED:
+        return "{0}: {1} estimated vs ~{2:.0f}s limit{3}".format(
+            item_label, est_txt, ceil_s, tail)
+    return "{0}: {1} estimated — exactly at the ~{2:.0f}s limit".format(
+        item_label, est_txt, ceil_s)
 
 
 # ---------------------------------------------------------------------------
