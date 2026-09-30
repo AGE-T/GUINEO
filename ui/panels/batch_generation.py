@@ -358,27 +358,131 @@ class _RowActions(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# P3.45.3 — two-line identity + name cell (scene-mode Name column)
+# ---------------------------------------------------------------------------
+class _NameCell(QWidget):
+    """The structural-identity + display-name cell of a Batch row.
+
+    Line 1 (small, muted): the Block·Part identity chip — a PROJECTION
+    of the Scene's expected-slot structure via
+    :meth:`BatchGenerationDialog._identity_chip` (engine
+    ``slot_identity_summary``), e.g.::
+
+        "B4 · Intro · Part 2/3"   block part (label / fraction optional)
+        "Part 9 · CAPTAIN"        plain / speaker-split part
+        "Unlinked part"           slot_id not in the current structure
+        "Manual job"              no slot provenance (duplicate / + Add)
+
+    Line 2: the existing display name (output filename → job name →
+    truncated prompt) — unchanged semantics.
+
+    The cell stores NOTHING: ``update_state`` recomputes both lines
+    from the job + the Scene on every refresh, so structural identity
+    never derives from queue position — reordering the queue changes
+    the "#" column only. ``mousePressEvent`` keeps the item-cell
+    interaction contract (clicking the wide Name column selects the
+    row). The container stays transparent (no background styling, no
+    autoFillBackground) so the delegate-painted row/selection
+    background shows through exactly as under the other cell widgets.
+    """
+
+    def __init__(self, dialog: "BatchGenerationDialog", job: BatchJob,
+                 parent=None):
+        super().__init__(parent)
+        self._dialog = dialog
+        layout = QVBoxLayout(self)
+        # P3.40 discipline: 0 vertical ::item padding keeps 47px of cell
+        # content height; margins (6, 4, 6, 4) + the VBox stretch put
+        # glyph tops at >= ~7px — the row-level pixel contracts
+        # (selection-fill sampling at row_top+3) sample delegate
+        # background, never glyphs.
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(1)
+        self._identity_label = QLabel("")
+        self._name_label = QLabel("")
+        layout.addWidget(self._identity_label)
+        layout.addWidget(self._name_label)
+        self.update_state(job)
+
+    # -- state ----------------------------------------------------------
+    def update_state(self, job: BatchJob) -> None:
+        """Recompute both lines (identity chip + display name) in place."""
+        text, tooltip, muted, _kind = self._dialog._identity_chip(job)
+        self._identity_label.setText(text)
+        chip_color = (Palette.TEXT_DISABLED if muted
+                      else Palette.TEXT_SECONDARY)
+        self._identity_label.setStyleSheet(
+            "QLabel {{ color: {color}; font-size: 10px;"
+            " font-weight: 600; }}".format(color=chip_color))
+        self._name_label.setText(self._dialog._display_name(job))
+        name_color = (Palette.TEXT_DISABLED
+                      if job.status == JobStatus.SKIPPED
+                      else Palette.TEXT_PRIMARY)
+        self._name_label.setStyleSheet(
+            "QLabel {{ color: {color}; font-size: 12px; }}".format(
+                color=name_color))
+        self.setToolTip(tooltip)
+
+    # -- test accessors --------------------------------------------------
+    def identity_text(self) -> str:
+        """The rendered identity-chip text (tests)."""
+        return self._identity_label.text()
+
+    def name_text(self) -> str:
+        """The rendered display-name text (tests)."""
+        return self._name_label.text()
+
+    # -- interaction ------------------------------------------------------
+    def mousePressEvent(self, event) -> None:
+        """Click = row selection (the item-cell interaction contract)."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            table = self._dialog._table
+            index = table.indexAt(
+                self.mapTo(table.viewport(), QPoint(0, 0)))
+            if index.isValid():
+                table.selectRow(index.row())
+                table.setCurrentIndex(index)
+                return
+        super().mousePressEvent(event)
+
+
+# ---------------------------------------------------------------------------
 # Job edit dialog
 # ---------------------------------------------------------------------------
 class JobEditDialog(QDialog):
     """Modal dialog for editing a single BatchJob.
 
     Includes a seed field (QLineEdit, empty = random, integer = specific seed).
+
+    P3.45.3: an optional read-only ``identity_note`` line at the top
+    states the job's structural binding ("Scene Part: B4 · Part 2/3") —
+    or the honest manual-job / unlinked-part contract for jobs with no
+    slot binding — so a duplicated row (P3.44.6 semantics) can never be
+    mistaken for the original structural Part while editing it.
     """
 
-    def __init__(self, job: BatchJob, voices: List[VoiceProfile], parent=None):
+    def __init__(self, job: BatchJob, voices: List[VoiceProfile], parent=None,
+                 identity_note: str = ""):
         super().__init__(parent)
         self._job = job
         self._voices = voices
         self.setWindowTitle("Edit Batch Job")
         self.setMinimumWidth(500)
-        self._build_ui()
+        self._build_ui(identity_note)
         self._load_from_job()
 
-    def _build_ui(self) -> None:
+    def _build_ui(self, identity_note: str = "") -> None:
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
         layout.setContentsMargins(12, 12, 12, 12)
+
+        if identity_note:
+            note = QLabel(identity_note)
+            note.setWordWrap(True)
+            note.setStyleSheet(
+                "color: {muted}; font-size: 11px;".format(
+                    muted=Palette.TEXT_SECONDARY))
+            layout.addWidget(note)
 
         grid = QGridLayout()
         grid.setSpacing(6)
@@ -1276,8 +1380,11 @@ class BatchGenerationDialog(QDialog):
         file_row.addStretch()
         left.addLayout(file_row)
 
-        # 7 columns (P3.28): #, [✓], File Name, Generated, Status,
-        # Duration, Actions — SCENE MODE. In the LEGACY manual window the
+        # 7 columns (P3.28): #, [✓], Part / File, Generated, Status,
+        # Duration, Actions — SCENE MODE. The Name column is "Part / File"
+        # (P3.45.3): a two-line _NameCell whose first line is the
+        # structural Block·Part identity chip and whose second line is the
+        # display name (output filename). In the LEGACY manual window the
         # original P3.18 five-column layout is kept EXACTLY (#, File Name,
         # Status, Duration, Actions at the original indices) so existing
         # behaviour and tests are untouched; the checkbox and Generated
@@ -1289,7 +1396,7 @@ class BatchGenerationDialog(QDialog):
             self._col_dur, self._col_act = 5, 6
             self._table = QTableWidget(0, 7)
             self._table.setHorizontalHeaderLabels(
-                ["#", "", "File Name", "Generated", "Status", "Duration",
+                ["#", "", "Part / File", "Generated", "Status", "Duration",
                  "Actions"])
         else:
             self._col_num, self._col_name = 0, 1
@@ -1821,6 +1928,15 @@ class BatchGenerationDialog(QDialog):
             num_item = QTableWidgetItem("{0:02d}".format(i + 1))
             num_item.setTextAlignment(Qt.Alignment.AlignCenter)
             num_item.setForeground(QColor(Palette.TEXT_SECONDARY))
+            if self._scene_mode:
+                # P3.45.3: "#" is QUEUE position (an execution/workspace
+                # concern) — explicitly distinct from the structural
+                # Block·Part identity shown in the Part / File column.
+                num_item.setToolTip(
+                    "Queue position (execution order).\n"
+                    "The Block·Part identity in the Part / File column\n"
+                    "comes from the Scene's slot structure — reordering\n"
+                    "this queue never changes it.")
             self._table.setItem(i, self._col_num, num_item)
 
             # "[✓]" selection checkbox (scene mode only).
@@ -1832,14 +1948,21 @@ class BatchGenerationDialog(QDialog):
                 self._table.setCellWidget(
                     i, self._col_check, check_widget)
 
-            # "Name / Segment" — show the output filename
-            # (the actual generated file name), falling back to job.name
-            # or truncated prompt if no filename is available yet.
-            name_item = QTableWidgetItem(self._display_name(job))
-            if job.status == JobStatus.SKIPPED:
-                # De-emphasize skipped rows at a glance.
-                name_item.setForeground(QColor(Palette.TEXT_DISABLED))
-            self._table.setItem(i, self._col_name, name_item)
+            # "Part / File" (scene mode, P3.45.3) / "File Name" (manual
+            # mode) — the row's identity area. Scene mode: a two-line
+            # _NameCell — the structural Block·Part chip derived from the
+            # Scene's expected-slot structure ABOVE the display name
+            # (output filename → job name → truncated prompt). Manual
+            # mode: the plain single-line item, EXACTLY as before.
+            if self._scene_mode:
+                name_cell = _NameCell(self, job)
+                self._table.setCellWidget(i, self._col_name, name_cell)
+            else:
+                name_item = QTableWidgetItem(self._display_name(job))
+                if job.status == JobStatus.SKIPPED:
+                    # De-emphasize skipped rows at a glance.
+                    name_item.setForeground(QColor(Palette.TEXT_DISABLED))
+                self._table.setItem(i, self._col_name, name_item)
 
             # "Generated" (derived state + versions ▾) — scene mode only.
             gen_widget = None
@@ -1877,6 +2000,9 @@ class BatchGenerationDialog(QDialog):
                 "gen_sig": self._generated_cell_signature(job),
                 "actions": actions,
                 "check": getattr(check_widget, "_checkbox", None),
+                # P3.45.3: the scene-mode Name cell widget (manual mode
+                # keeps the plain item — None here).
+                "name": name_cell if self._scene_mode else None,
             })
 
         # --- restore the captured interaction state (P3.44 §7) --------
@@ -1919,18 +2045,30 @@ class BatchGenerationDialog(QDialog):
                 self._rebuild_table(jobs)
                 return
 
-            # 1. Name item (output filename appears when the job
-            #    completes; skipped rows de-emphasize).
-            item = self._table.item(i, self._col_name)
-            if item is not None:
-                display_name = self._display_name(job)
-                if item.text() != display_name:
-                    item.setText(display_name)
-                fg = QColor(Palette.TEXT_DISABLED
-                            if job.status == JobStatus.SKIPPED
-                            else Palette.TEXT_PRIMARY)
-                if item.foreground() != fg:
-                    item.setForeground(fg)
+            # 1. Name cell. Scene mode (P3.45.3): the _NameCell widget
+            #    updates IN PLACE (identity chip + display name + skipped
+            #    de-emphasis — no widget destruction, §7/§8). Manual mode:
+            #    the plain item text/foreground as before.
+            if self._scene_mode:
+                name_cell = refs.get("name")
+                if name_cell is None:
+                    # Defensive: widget missing (should not happen — the
+                    # signature check guarantees alignment) → full rebuild.
+                    self._rendered_signature = None
+                    self._rebuild_table(jobs)
+                    return
+                name_cell.update_state(job)
+            else:
+                item = self._table.item(i, self._col_name)
+                if item is not None:
+                    display_name = self._display_name(job)
+                    if item.text() != display_name:
+                        item.setText(display_name)
+                    fg = QColor(Palette.TEXT_DISABLED
+                                if job.status == JobStatus.SKIPPED
+                                else Palette.TEXT_PRIMARY)
+                    if item.foreground() != fg:
+                        item.setForeground(fg)
 
             # 2. Status pill — replace ONLY when this job's status
             #    actually changed. The pill has no focusable children,
@@ -2035,6 +2173,105 @@ class BatchGenerationDialog(QDialog):
         elif job.output_filename:
             return job.output_filename
         return job.name or job.prompt[:40]
+
+    # ------------------------------------------------------------------
+    # P3.45.3: structural identity projection (Block → Part → row)
+    # ------------------------------------------------------------------
+    def _identity_chip(self, job: BatchJob):
+        """The structural identity line for a row (scene mode only).
+
+        Returns ``(text, tooltip, muted, kind)`` — a pure PROJECTION of
+        the Scene's expected-slot structure through
+        ``engine.audio_provenance.slot_identity_summary`` (the same
+        authoritative structure the queue was built from and Scene
+        Combine resolves against). Queue position is NEVER consulted,
+        so reordering the queue can never change a row's identity.
+
+        Kinds:
+          "block"    "B{n}[ · user label][ · Part x/y]"  — block part
+          "plain"    "Part {n}[ · speaker]"               — plain/speaker
+          "unlinked" "Unlinked part"  — slot_id not in the CURRENT
+                      structure (never a fabricated mapping)
+          "manual"   "Manual job"     — no slot provenance (P3.44.6
+                      duplicate rows / "+ Add" rows)
+          "none"     manual Batch Queue window — no scene, no layer
+        """
+        if not self._scene_mode or self._scene is None:
+            return ("", "", False, "none")
+        slot_id = getattr(job, "slot_id", None)
+        if not slot_id:
+            return (
+                "Manual job",
+                "Manual Batch job — not bound to a Block Part of this "
+                "Scene.\n(Duplicates and manually added rows carry no "
+                "slot\nprovenance by design — P3.44.6. Generating them "
+                "never\njoins a Scene slot or its version history.)",
+                True, "manual")
+        from engine.audio_provenance import slot_identity_summary
+        info = slot_identity_summary(self._scene, slot_id)
+        if info is None:
+            return (
+                "Unlinked part",
+                "This job's Part no longer exists in the Scene's current\n"
+                "slot structure (the structure was re-materialised after\n"
+                "this job was created — e.g. blocks were re-detected and\n"
+                "Generate Long ran again).\n"
+                "Its audio is not part of the Scene's coverage or Combine.",
+                True, "unlinked")
+        speaker = info.get("speaker") or ""
+        if info.get("block_id") is None:
+            text = "Part {0}".format(info.get("part_index"))
+            if speaker:
+                text += " · {0}".format(speaker)
+            tip = ("Scene Part {0} of the current structure (plain or\n"
+                   "speaker-split part — no Narration Block).".format(
+                       info.get("part_index")))
+            if speaker:
+                tip += "\nSpeaker: {0}".format(speaker)
+            tip += ("\nRegenerating this row creates a new VERSION of "
+                    "this\nsame Part.")
+            return (text, tip, False, "plain")
+        text = "B{0}".format(info.get("block_number"))
+        if info.get("user_label"):
+            text += " · {0}".format(info["user_label"])
+        if info.get("parts_in_block", 0) > 1:
+            text += " · Part {0}/{1}".format(
+                info.get("part_of_block"), info["parts_in_block"])
+        tip = "Scene Part — Narration Block B{0}".format(
+            info.get("block_number"))
+        if info.get("user_label"):
+            tip += " ('{0}')".format(info["user_label"])
+        if info.get("parts_in_block", 0) > 1:
+            tip += ", Part {0} of {1}".format(
+                info.get("part_of_block"), info["parts_in_block"])
+        tip += "."
+        tip += "\nGlobal part {0} of the Scene's slot structure.".format(
+            info.get("part_index"))
+        if speaker:
+            tip += "\nSpeaker: {0}".format(speaker)
+        tip += ("\nRegenerating this row creates a new VERSION of this\n"
+                "same Part (queue position never changes structural\n"
+                "identity).")
+        return (text, tip, False, "block")
+
+    def _identity_note(self, job: BatchJob) -> str:
+        """The read-only identity line for the Job editor (P3.45.3).
+
+        Structural jobs state their Block·Part binding (the same
+        projection as the row chip); slot-less jobs in scene mode state
+        the honest manual-job contract; the manual Batch Queue window
+        adds no note (everything there is manual by definition).
+        """
+        text, _tip, _muted, kind = self._identity_chip(job)
+        if kind == "none":
+            return ""
+        if kind == "manual":
+            return ("Manual Batch job — not bound to a Block Part of this "
+                    "Scene. Generating it never joins a Scene slot.")
+        if kind == "unlinked":
+            return ("Unlinked Part — its slot no longer exists in the "
+                    "Scene's current structure.")
+        return "Scene Part: {0}".format(text)
 
     def _duration_text(self, job: BatchJob) -> str:
         """The Duration column text (with the P3.27B anomaly marker)."""
@@ -2759,7 +2996,8 @@ class BatchGenerationDialog(QDialog):
             prompt="",
             parameters=GenerationParameters(),
         )
-        dlg = JobEditDialog(job, self._voices, self)
+        dlg = JobEditDialog(job, self._voices, self,
+                            identity_note=self._identity_note(job))
         if dlg.exec() == QDialog.DialogCode.Accepted:
             dlg.apply_to_job()
             self._manager.add_job(job)
@@ -2778,7 +3016,8 @@ class BatchGenerationDialog(QDialog):
         # Deep-ish copy via dict round-trip
         from engine.batch_manager import BatchJob as _BJ
         clone = _BJ.from_dict(original.to_dict())
-        dlg = JobEditDialog(clone, self._voices, self)
+        dlg = JobEditDialog(clone, self._voices, self,
+                            identity_note=self._identity_note(clone))
         if dlg.exec() == QDialog.DialogCode.Accepted:
             dlg.apply_to_job()
             # Replace the original in-place

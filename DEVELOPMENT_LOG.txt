@@ -4148,3 +4148,130 @@ kapcsolatlan renderelés-refaktor. A P3.45.3 NEM kezdődött el.
 DOKUMENTÁCIÓ: docs/design/P3_45_2B_DURATION_ESTIMATION_SPLITTER_
 CONSISTENCY.md (12 szakasz); OPEN_BUGS.md P3.45.2B szakasz. A P3.45.2B
 ITT ÁLL MEG — a P3.45.3 (renderelési keménítés) NEM kezdődött el.
+
+P3.45.3 — BATCH BLOCK-IDENTITÁS
+(Block→Part→BatchJob kapcsolat láthatóvá tétele, prezentációs vetület)
+════════════════════════════════════════════════════════════════════
+DÁTUM: 2026-09-30
+ALAP: main @ 5684dc6 (P3.45.2B kész; P3.44.9, P3.44.9.1, P3.45.1,
+P3.45.2A, P3.45.2B fagyasztva; origin/main == local main, ellenőrizve;
+munkafa tiszta).
+KÖRNYEZET: PySide6 6.11.2 + pytest 9.0.2 + libEGL shim /tmp/gllibs;
+releases/ 5 zip (keep-last-5); a P3.45.2B suite a főn 33/33 — az alap
+igazolva.
+
+FELADAT: teljes kódszintű audit (BatchManager, BatchJob, Batch-ablak,
+sor-widgetek, létrehozás/duplikálás/regenerálás/szerkesztés, sorrend,
+szerializáció, slot-materializáció, eredmény-regisztráció,
+verzió-kezelés, Scene Combine, Manual Concatenate, projekt mentés/
+betöltés, re-detektálás, blokk-státusz szinkron) → identitás-térkép →
+architekturális döntés → minimális biztonságos implementáció →
+regresszió-tesztek → teljes validáció → friss build → Git-push.
+
+AUDIT (a tényleges HEAD-en): az identitás MINDEN láncszemen át lett
+adva és strukturálisan sehol nem veszett el — Block (uuid4[:12] +
+opcionális címke) → slot_id "{block_id}:{part_of_block}" /
+"plain:{part_index}" → SplitPart (source_block_id, part_of_block,
+block_label, speaker, character_id) → BatchJob (slot_id, part_index,
+part_version, source_block_id, generation_run + kontextus) →
+GenerationRequest (P3.44.6: minden továbbítva) → GenerationResult →
+AudioAsset (EGY író bélyegzi) → resolved_asset_for_slot (választás →
+legfrissebb) → Scene Combine (slot-sorrend). Amit a felhasználó NEM
+láthatott: a Batch-táblázat Név-oszlopa kizárólag a kimeneti
+fájlnevet mutatta (Eden_S03_Long_v01_Part_009_….wav) — egyetlen Batch-
+felület sem jelenítette meg, hogy egy sor melyik BLOKKHOZ és a blokk
+hányadik PARTJÁHOZ tartozik; a source_block_id-et a splitter
+kifejezetten a BatchGenerationDialog számára tervezte, de UI-kód soha
+nem fogyasztotta. Nevezési inkonzisztencia: gutter "B{N}" (pozicionális),
+splitter block_label "Block {N}" (split-időben pozicionális), user-
+címkék — három névtér, egyik sem látható a Batch-ben. A sorrend-
+összevonás: a "#" oszlop SOR-Pozíció (végrehajtási/ munkaterület-
+fogalom), a strukturális sorrend az expected_audio_slots-ban él (Combine,
+lefedettség) — a motor oldala (P3.44.1 objektum-identitás, P3.44.4
+futás-tagozás) már helyes volt, csak a PREZENTÁCIÓ mosotta össze.
+Re-detektálás: minden blokk-idet TERVEZETTEN cseréli; a slotokat NEM
+materializálja újra (egyetlen produkciós hívó a Generate Long —
+dokumentált residuális, OPEN_BUGS 2531-2535).
+
+ARCHITEKTURÁLIS DÖNTÉS: CASE A — a meglévő adat MINDENT tartalmaz
+(BatchJob.slot_id mindkét oldalon; expected_audio_slots block_id/
+block_label/part_of_block/part_index/speaker; blokk-pozíció a
+struktúra distinct-blokk-sorrendjéből — amíg a struktúra aktuális,
+megegyezik a gutter B{N}-jével; blokkonkénti partszám a azonos
+block_id-jú slotok számából; user-címke vs auto "Block {N}" forma
+megkülönböztethető). Ezért CSAK prezentációs vetület: nincs új
+identitás-rendszer, nincs új igazság-forrás, nincs hiányzó
+propagációs útvonal.
+
+IMPLEMENTÁCIÓ (3 felület):
+1) engine/audio_provenance.py — slot_identity_summary(scene, slot_id):
+tisztán levezetett dict {block_number, user_label, part_of_block,
+parts_in_block, part_index, speaker, …} vagy None, ha a slot nincs az
+aktuális struktúrában (a hívónak őszintén kell mutatnia az unlinkot).
+_AUTO_BLOCK_LABEL_RE ("Block \d+\Z") választja el az auto címkét — soha
+nem jelenik meg "B4 · Block 4".
+2) ui/panels/batch_generation.py — _NameCell két-soros Név-cella
+(scene-mód, fejléc "Part / File"): 1. sor identitás-chip — blokk-Part:
+"B4 · Intro · Part 2/3" (több-Partes blokknál törtszám; címkés blokknál
+címke; egy-Partes blokknál csak "B{n}"); plain/speaker: "Part 9 ·
+CAPTAIN" (globális strukturális sorszám); "Unlinked part" (a slot nincs
+az aktuális struktúrában — soha nem koholt blokk-leképezés); "Manual
+job" (P3.44.6 duplikátum / +Add — nincs slot-provenancia); 2. sor a
+régi display-név változatlanul. A cella SEMMIT nem tárol: minden
+frissítés (rebuild ÉS a P3.44 §7/§8 in-place útvonal) újraszámolja a
+slot_identity_summary-ből — a strukturális identitás SOHA nem
+sor-pozícióból származik. Átlátszó konténer (a P3.40 sor-pixel-
+kontraktok megőrizve és újra-ellenőrizve); mousePressEvent = sor-
+kiválasztás (item-cell interakciós szerződés); 48px sormagasság
+változatlan. A "#" oszlop scene-mód tooltipja kimondja: sor-pozíció
+(végrehajtási sorrend) vs strukturális identitás. A kézi Batch-ablak
+(Váltó: manuál) VÁLTOZATLANUL sima item-cella "File Name" fejléccel.
+3) JobEditDialog — opcionális identity_note: "Scene Part: B4 · Part 2/3"
+strukturális jobnál; őszinte manuál-szerződés slot-nélküli sornál scene-
+módban; üres a manuál-ablakban. Egy duplikátum szerkesztés közben SOHA
+nem téveszthető össze az eredeti strukturális Parttal.
+
+TESZTEK: tests/test_p3_45_3_batch_block_identity.py — 40 fókuszált
+teszt (identitás-levezetés 1/2/3-Partes blokkokra; determinisztikus
+sorrend; user vs auto címke; plain/speaker; unknown slot → None;
+regen megőrzi a Partot; duplikátum P3.44.6-vezérlés + ütközés-védelem
+(a fájlnevet másoló duplikátum futtatása ELBUKIK, az eredeti fájlt
+soha nem írja felül); sor-rendezés identitás-megőrzéssel + struktúra
+érintetlen; queue YAML + Scene dict + teljes Flow E prezentációs
+kör-út; re-detekt: id-csere vezérlés, NEM koholt leképezés, NEM látszik
+stale id; VALÓDI MainWindow+Engine futtatás — arany útvonal (létrehozás
+→ valódi dialógus → valódi futás → regisztrált assetek → megjelenített
+B·Part chipek), regen új verzió, duplikátum nem csatlakozik slothoz,
+szelektív futás, hibás futás; UI: chipek fajtánként, fejlécek, #
+tooltip, manuál-ablak változatlan, sor-magasság/geometria kontraktok,
+kattintás=kiválasztás, in-place frissítés widget-újraépítés nélkül,
+skipped-deemphasize, JobEditDialog jegyzet, státusz-pill társítás).
+
+VALIDÁCIÓ: fókusz 40/40 KÉTSZER (stabil); regresszió-akkumulátor:
+P3.45.2B 33, P3.45.2A 42, P3.45.1 20, P3.44.9+9.1+P3.28+P3.23+
+P3.31 206+35 subteszt, P3.44.1/4/5/6 104, playback/two-workflows/nb/
+outlier/ux-batch 139, projekt mentés/betöltés család 180 — MIND zöld;
+TELJES akku 6 darabban: 1697 passed + 2 dokumentáltan előzőleg létező
+hiba (SS-3 P3.37 README; P3.44.4 stop-timing flake izoláltan zöld, a
+pristin fán P3.45.2B-ben 2/8-ban bizonyítottan elbukik — változatlan);
+verify_compile 152/152 PASS; verify_architecture PASS;
+verify_functional_integrity 80/80 PASS; verify_integration az előzőleg
+létező stop-szemantika-sértés (pristin-azonos, OPEN_BUGS); launch smoke
+12/12 a valódi belépési útvonalon (ss/p3453_launch_smoke.py, nem
+commitált próba).
+
+HATÁRKAPU-ELLENŐRZÉS: nincs új identitás-rendszer; nincs új igazság-
+forrás (a UI kizárólag a meglévő modell vetülete); nincs slot_id/
+generation_run/part_version-újratervezés; nincs GenerationPlan;
+nincs fingerprint; nincs STALE; nincs session-locking; nincs Batch-
+architektúra-átírás; nincs Scene Combine-átírás; nincs Manual
+Concatenate-átírás; nincs P3.44.9-változás; nincs P3.44.9.1-geometriai
+változás; nincs P3.45.1-státusz-architektúra változás; nincs
+P3.45.2A-preflight-változás; nincs P3.45.2B-becsülő-változás; nincs
+időzítő; nincs lekérdezés; nincs automatikus strukturális
+rekonciliáció re-detektálás után; nincs user-szöveg-mutáció; nincs
+kapcsolatlan renderelés-refaktor. A P3.45.4 NEM kezdődött el.
+
+DOKUMENTÁCIÓ: docs/design/P3_45_3_BATCH_BLOCK_IDENTITY.md (10 szakasz);
+OPEN_BUGS.md P3.45.3 szakasz. A P3.45.3 ITT ÁLL MEG — a P3.45.4 NEM
+kezdődött el.

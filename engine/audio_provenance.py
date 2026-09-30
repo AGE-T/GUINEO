@@ -390,6 +390,87 @@ def block_slot_states(scene: Any) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Per-slot identity derivation — display projection (P3.45.3)
+# ---------------------------------------------------------------------------
+# The splitter's automatic block label form ("Block {N}"). A block_label
+# matching this pattern is POSITIONAL metadata captured at split time, not
+# a user-authored name — display layers derive their own positional "B{N}"
+# from the structure and must not repeat the auto label beside it.
+_AUTO_BLOCK_LABEL_RE = re.compile(r"Block \d+\Z")
+
+
+def slot_identity_summary(scene: Any, slot_id: str) -> Optional[Dict[str, Any]]:
+    """P3.45.3: display-oriented identity derivation for ONE expected slot.
+
+    A pure projection of the Scene's expected-slot structure (the same
+    authoritative structure the batch queue was built from and Scene
+    Combine resolves against) — no new stored identity, no second source
+    of truth. The Batch UI renders this; it never re-derives identity
+    from queue position.
+
+    Returns ``None`` when ``slot_id`` does not match any expected slot —
+    the caller's job is UNLINKED from the current structure (e.g. a queue
+    row from an older structure after a re-materialisation). Never a
+    fabricated mapping: the caller must present the unlink honestly.
+
+    Otherwise a dict:
+
+    {slot_id, block_id, block_number, block_label, user_label,
+     part_of_block, parts_in_block, part_index, speaker, character_id}
+
+    * ``block_number``: 1-based position of the block within the
+      structure's distinct-block order. While the structure is current
+      this matches the editor gutter's positional "B{N}" (the splitter
+      emits parts in block order, so the Nth distinct block_id is the
+      Nth block of the document). ``None`` for plain/speaker slots.
+    * ``user_label``: the block's recorded label when it is a USER
+      label (anything other than the splitter's auto ``Block {N}``
+      form), else ``""`` — so display code can show ``B4 · Intro``
+      without ever printing ``B4 · Block 4``.
+    * ``parts_in_block``: how many expected slots share this block_id
+      (the deterministic "Part 2 of 3" denominator). ``0`` for
+      plain/speaker slots (turn totals are NOT derivable from the
+      structure — consecutive-speaker grouping would be positional
+      inference, which this function never performs).
+    """
+    if not isinstance(slot_id, str) or not slot_id:
+        return None
+    block_number: Dict[Any, int] = {}
+    block_parts: Dict[Any, int] = {}
+    target: Optional[Dict[str, Any]] = None
+    for slot in (getattr(scene, "expected_audio_slots", None) or []):
+        if not isinstance(slot, dict):
+            continue
+        key = slot.get("block_id")
+        if key is not None and key not in block_number:
+            block_number[key] = len(block_number) + 1
+        if key is not None:
+            block_parts[key] = block_parts.get(key, 0) + 1
+        if slot.get("slot_id") == slot_id:
+            target = slot
+    if target is None:
+        return None
+    block_id = target.get("block_id")
+    block_label = str(target.get("block_label") or "")
+    user_label = ""
+    if block_label and not _AUTO_BLOCK_LABEL_RE.match(block_label):
+        user_label = block_label
+    return {
+        "slot_id": slot_id,
+        "block_id": block_id,
+        "block_number": block_number.get(block_id) if block_id is not None else None,
+        "block_label": block_label,
+        "user_label": user_label,
+        "part_of_block": int(target.get("part_of_block") or 1),
+        "parts_in_block": block_parts.get(block_id, 0)
+        if block_id is not None else 0,
+        "part_index": target.get("part_index"),
+        "speaker": str(target.get("speaker") or ""),
+        "character_id": target.get("character_id"),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Scene completeness — pure function (P3.28 §5 / Rec 7)
 # ---------------------------------------------------------------------------
 def coverage_counts(scene: Any) -> Tuple[int, int]:

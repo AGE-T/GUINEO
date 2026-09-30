@@ -2681,3 +2681,55 @@ Residuals (evidence-based, no action this round):
   collect (1659 tests) and both files run green in the full battery.
 
 No backlog items were removed in this round.
+
+## P3.45.3 round — Batch Block identity (presentation-only projection)
+
+### P3.45.3 — Block/Part identity invisible in the Batch UI; queue position conflated with structural identity (CLOSED as a presentation gap)
+
+The P3.45.3 audit (at `5684dc6`) confirmed the Phase 0 triage findings
+and closed them as **CASE A** — the data already contained everything
+(the identity chain Block → slot_id → BatchJob → GenerationRequest →
+AudioAsset → Combine passes and persists every field); only the
+presentation was missing. Fixed as a projection:
+
+1. **Batch rows exposed no Block identity** — the Name column showed
+   the output filename only; `source_block_id` had no UI consumer.
+   FIXED: `slot_identity_summary` (engine, pure) + the `_NameCell`
+   two-line cell ("Part / File" column): `B4 · Intro · Part 2/3` /
+   `Part 9 · CAPTAIN` / `Unlinked part` / `Manual job`, recomputed from
+   the Scene's expected-slot structure on every refresh — never from
+   queue position.
+2. **Multiple naming namespaces** — the gutter's positional `B{N}`, the
+   splitter's auto `Block {N}` and user labels never met in one
+   surface. FIXED: the chip derives `B{N}` from the structure's
+   distinct-block order (matches the gutter while the structure is
+   current) and shows the user label beside it (auto labels suppressed
+   via `_AUTO_BLOCK_LABEL_RE`); raw uuids stay internal.
+3. **Queue order vs structural order invisible** — FIXED: the "#"
+   tooltip states the distinction; chips travel with job objects across
+   reorders while `expected_audio_slots` (Combine order) is untouched
+   (pinned by tests). Manual Concatenate (queue order) and Scene
+   Combine (slot order) remain the intentionally distinct concepts.
+4. **Duplicate confusion** — FIXED: `Manual job` chip + JobEditDialog
+   identity note; a duplicate's generation joins no slot (P3.44.6
+   control re-pinned) and its copied filename is guarded: a collision
+   FAILS the row without touching the original's audio (new pin).
+
+Residuals (evidence-based, no action this round — the task forbids
+inventing reconciliation logic):
+- Re-detect still replaces block ids without re-materialising slots
+  (pre-existing, see the P3.45.1 entry): between a re-detect and the
+  next Generate Long the chips describe the RECORDED structure, and a
+  restored old queue row shows `Unlinked part`. Slot re-materialisation
+  on Re-detect remains a P3.45.2+ structure decision.
+- Speaker-turn part totals are not derivable from the structure
+  (consecutive-speaker grouping would be positional inference): speaker
+  parts show the global `Part {n}`, not a turn fraction.
+- Block labels shown are as recorded at split time (a label renamed
+  after the split appears after the next structure event) — consistent
+  with the §0 rule that slots change only on structure events.
+- The pre-existing environment failures are unchanged from the
+  P3.45.2B round (SS-3; the P3.44.4 stop-timing flake, green isolated;
+  `verify_integration` stop semantics, pristine-identical).
+
+No backlog items were removed in this round.
