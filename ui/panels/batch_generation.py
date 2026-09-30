@@ -504,6 +504,16 @@ class JobEditDialog(QDialog):
         j = self._job
         j.name = self._name.text().strip()
         j.prompt = self._prompt.text()
+        # P3.45.2B — the R2 output guard's expectation must track the
+        # EDITED request: expected_duration is recomputed from the new
+        # prompt through the canonical estimator (the request-text basis
+        # of this workspace — the same text the batch-start preflight
+        # classifies). Previously the split-time estimate of the
+        # ORIGINAL text survived every prompt edit (silently stale for
+        # the guard's post-generation comparison; queue save/load
+        # round-tripped the stale value too).
+        from engine.duration_estimation import estimate_speech_seconds
+        j.expected_duration = estimate_speech_seconds(j.prompt)
         j.voice_id = self._voice.currentData()
         fname = self._output_filename.text().strip()
         j.output_filename = fname if fname else None

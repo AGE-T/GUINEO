@@ -4030,3 +4030,121 @@ védett útvonalak; maradó bypassok; tesztek; validáció; határkapu;
 kockázatok; fájlok). OPEN_BUGS.md: P3.45.2A szakasz. A P3.45.2A ITT
 ÁLL MEG — a P3.45.2B (Duration Estimation Consistency) és a P3.45.3
 NEM kezdődött el.
+
+P3.45.2B — DURÁCIÓ-BECSLÉS + SPLITTER-KONZISZTENCIA
+(kanonikus estimator, 20-25 s termék-cél, speaker-turn biztonságos szétosztás)
+════════════════════════════════════════════════════════════════════
+DÁTUM: 2026-09-30
+ALAP: main @ 5a6e5f3 (P3.45.2A kész; P3.44.9, P3.44.9.1, P3.45.1,
+P3.45.2A fagyasztva; origin/main == local main, ellenőrizve).
+KÖRNYEZET-MEGJEGYZÉS: a sandbox visszaállt — a GUINEO-klón, a
+PAT-hitelesítő és a PySide6-os venv újraépült (friss klón @ 5a6e5f3;
+hitelesítő visszaírva; PySide6 6.11.2 + pytest 9.0.2 + libEGL shim
+/tmp/gllibs; a P3.45.2A suite a friss klónon 42/42 — az alap
+igazolva).
+
+FELADAT: teljes kódszintű audit (duráció-termelők, szöveg-bázisok,
+splitter, 2A-preflight, staleség, UI-felületek) → kanonikus duráció-
+szemantika meghatározása → minimális biztonságos implementáció →
+regresszió-tesztek → teljes validáció → friss build → Git-push.
+
+AUDIT (a tényleges HEAD-en, nem a korábbi triage-ből): a becsülés
+hat helyen élt KÉT szöveg-bázissal (splitter×4: sima szöveg;
+Preview-statisztika: TOKENIZÁLT prompt — a vezérlő-tokenok beszédnek
+számítottak, +25% egy Fear-blocknál, triage-ben +102%; preflight:
+saját konstans). A grouping 3 mondatnál zárt (~13 s tipikus part —
+a 20-25 s cél ALATT); MAX_CHARS=400 sapka; az egyedüli >400 mondat
+saját, PLC-nélküli part (606 kar = 40,4 s, mért); a $SPEAKER-turn
+EGY part bármilyen méretben (1099 kar = 73,3 s, mért — a 2A-bypass).
+NINCS al-mondatos mechanizmus sehol (sentence_boundaries kizárólag
+mondat-szintű). Valódi stale-útvonalak: pár-szerkesztés a dialógusban
+(estimated_duration sosem számolódott újra → BatchJob.expected_duration
+→ R2-őr), Batch prompt-szerkesztés (apply_to_job nem írta), queue-YAML
+körutazás. A duplicate_job szándékosan nem másolja (P3.44.6 dokumentált
+szemantika — NEM érintve). Egy félrecímkézett felület: az Assemble §41
+kommentje "estimated" mért összegeken (a látható szöveg semleges volt).
+
+KANONIKUS ESTIMATOR (egy jelentés, egy konstans, bázisonként egy
+alap): ÚJ engine/duration_estimation.py — ESTIMATED_CHARS_PER_SECOND
+= 15.0 (a történeti heurisztika, KALIBRÁLATLANUL — nincs mérési
+korpusz, a task tiltja az újrakalibrálást; az output_guard ezt az
+objektumot importálja alias-névvel, identitás-teszttel rögzítve —
+sehol nincs második konstans) + estimate_speech_seconds(text) (tiszta
+függvény; becslés, sosem mért érték, sosem limit). Szándékosan NEM
+egyesített mennyiségek: a kemény kimeneti plafon (output_guard,
+max_new_tokens/25) és a mért durációk külön modulokban maradtak.
+
+20-25 S TERMÉK-CÉL (NEM modell-limit, NEM futásidejű limit, NEM
+csonkolási garancia — a valódi plafon a 2A-preflightban változatlan):
+TARGET_PART_SECONDS=20.0 → TARGET_PART_CHARS=300 (a kanonikus rátából
+származtatva, sosem puszta kar-konstans); zárás ha a csoport ≥300 ÉS
+utána még ≥300 beszéd van (lookahead-összefésülés — minden ≤400 karos
+szöveg pontosan EGY part; nincs badar rövid farok); MAX_CHARS=400
+kemény sapka VÁLTOZATLANUL (a "400→300/300 csere" tiltva és nem is
+történt). Tipikus partok: 300-400 kar = 20-26,7 s (átlag ~23 s) —
+"körülbelül 20-25 másodperc". A /15 NEM lett újrakalibrálva.
+
+HOSSZÚ EGYES MONDAT: nincs biztonságos al-mondatos felosztás → EGY
+túlméretes part, NINCS karakter-vágás, kanonikus becslés a teljes
+mondatra, a 2A-preflight őszintén jelzi (a cél feletti, de plafon alatti
+part SAFE — NEM találtunk ki 30 s-stílusú limitet).
+
+SPEAKER-TURN: a $SPEAKER: deklaráció SORSZINTŰ határ a part-szövegen
+KÍVÜL — a turn szövege ugyanazzal a scanner+grouping logikával
+mondat-csoportozva, minden csoport SplitPart a turn speaker/
+character_id/effektív állapotával, saját komplett compiled prompttal.
+A speaker-identitás, marker-pozíció, forrásszöveg és sorrend
+konstrukció-szintén megőrzött; a speaker-partok PLAIN slotok
+(slot_id=plain:{part_index}) — nincs új azonosítás, nincs slot_id-
+változás, nincs lineage-változás. A 2A "unpunctuated giant turn"
+esete továbbra is EGY part (a 2A suite érintetlenül zöld).
+
+STALESÉG-JAVÍTÁSOK (minden valódi útvonal): dialógus-szerkesztés →
+ÉLŐ fejléc-frissítés (textChanged → becslés + karok + újraklasszifikált
+2A-jelölő + aggregát-total + limit-note láthatóság) ÉS estimated_duration
+újraszámolás a Generate-nél a szerkesztett szövegből (BatchJob.expected_duration
+→ R2-őr friss); Batch prompt-szerkesztés → apply_to_job újraszámol
+(kérés-szöveg bázis); queue-YAML körutazás konzisztens. A Preview-
+statisztika kanonikus sima-szöveg bázisra váltott (a tokenizált bázis
+volt a bizonyított inkonzisztencia). Az Assemble §41 komment/dokstring
+szóhasználat javítva (komment-szintű, nulla viselkedésváltozás).
+
+2A-KAPCSOLAT: a preflight a kanonikus konstansét fogyasztja (import,
+identitás rögzítve) → ugyanazon bemenet-semantikánál preflight ==
+splitter (rögzített teszt). A 2A határszemantika bájtonként azonos
+(2457/2458/2460@4100); a hívási pontok és szöveg-bázisok változatlanok
+(a dialógus-újraellenőrzés a part-szövegen marad — 2A dokumentált
+döntés; a token-inflációs vak-ablak a plafonélén dokumentált maradék).
+
+TESZTEK: tests/test_p3_45_2b_duration_splitter_consistency.py — 33
+fókuszált teszt valódi alkalmazási útvonalakon (ház-harness). Két
+P3.44.8-assertión frissült, mert a nyugdíjazott mondat-darabszám-
+célzást rögzítették (indoklási kommenttel; a teszt CÉLJA — decimális
+határ-integritás és exact-slice megőrzés — változatlan és felerősödött).
+
+VALIDÁCIÓ: fókusz 33/33 KÉTSZER (stabil); TELJES akku 6 előtéri
+darabban: 1657 passed + 2 KIZÁRÓLAG előzőleg létező hiba (SS-3, a
+preregisztrált P3.37 README-teszt, a pristin fán azonosan elbukik;
+valamint test_p3_44_4…test_regen_run_stop_leaves_others_pending időzítési
+flake — git stash-sel BIZONYÍTOTTAN a tiszta 5a6e5f3 fán is 2/8 futásban
+elbukik, a P3.45.2B semmit nem változtatott az adott útvonalon);
+verify_compile 151/151 PASS; verify_architecture PASS;
+verify_functional_integrity 80/80 PASS; verify_integration ELBUKIK
+egy stop-szemantika-sértéssel — a pristin fán azonos (előzőleg létező,
+a 2A-menet nem futtatta az eszközt, OPEN_BUGS-ban rögzítve); launch
+smoke 11/11 a valódi belépési útvonalon (ss/p3452b_launch_smoke.py,
+nem commitált próba).
+
+HATÁRKAPU-ELLENŐRZÉS: a /15 NEM lett újrakalibrálva; NEM találtunk ki
+modell-limitet; a 20-25 s TERMÉK-CÉLként van kezelve; nincs karakter-
+vágás; nincs szöveg-mutáció; nincs slot_id-változás; nincs azonosítás-
+újratervezés; nincs GenerationPlan; nincs fingerprint; nincs STALE;
+nincs session-locking; nincs Batch-átírás; nincs Scene Combine-átírás;
+nincs Manual Concatenate-átírás; nincs P3.44.9-változás; nincs
+P3.44.9.1-geometriai változás; nincs időzítő/lekérdezés (a textChanged
+a dialógus SAJÁT szerkesztőin, nem globális esemény-háló); nincs
+kapcsolatlan renderelés-refaktor. A P3.45.3 NEM kezdődött el.
+
+DOKUMENTÁCIÓ: docs/design/P3_45_2B_DURATION_ESTIMATION_SPLITTER_
+CONSISTENCY.md (12 szakasz); OPEN_BUGS.md P3.45.2B szakasz. A P3.45.2B
+ITT ÁLL MEG — a P3.45.3 (renderelési keménítés) NEM kezdődött el.

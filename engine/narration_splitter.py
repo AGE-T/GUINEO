@@ -4,12 +4,26 @@ SpeechStudio Engine - Narration Splitter.
 Splits long text into generation-safe parts at sentence boundaries.
 Never cuts inside a sentence. Respects Narration Block boundaries.
 
-Rules:
-- Target: ~3-4 sentences per part (up to ~400 chars)
+Rules (P3.45.2B product target):
+- Target: parts of approximately 20-25 seconds of estimated speech
+  (a PRODUCT TARGET derived from the canonical estimation rate —
+  NOT a model hard limit; the hard output ceiling lives in
+  engine/output_guard and is unrelated to this grouping choice)
 - Always cut at sentence end (. ! ? …)
 - Never cut inside a sentence
 - If Narration Blocks exist, each block starts a new part boundary
-- Short sentences are accumulated until the target is reached
+  (a block of at most MAX_CHARS is always ONE part — the 1-block =
+  1-part mapping the user expects)
+- Sentences are accumulated until the part reaches the duration
+  target AND enough text remains to form another target-sized part;
+  a small remainder merges into the current part instead of leaving
+  a silly short tail
+- A single sentence longer than MAX_CHARS gets its own (oversized)
+  part — the architecture has NO sub-sentence splitting mechanism
+  (text integrity beats the duration target; surfaced honestly by
+  the P3.45.2A preflight)
+- A long $SPEAKER turn is sentence-grouped into several parts, all
+  carrying the same speaker/character/effective state (P3.45.2B)
 - Every part gets append_silence=0.5 (post-generation silence, not model-generated)
 """
 
@@ -26,6 +40,10 @@ from engine.sentence_boundaries import (
     INLINE_MARKER_RE as _SHARED_INLINE_MARKER_RE,
     split_sentence_units as _split_units,
     split_sentences as _split_sentence_texts,
+)
+from engine.duration_estimation import (
+    ESTIMATED_CHARS_PER_SECOND as _ESTIMATED_CHARS_PER_SECOND,
+    estimate_speech_seconds as _estimate_speech_seconds,
 )
 from engine.logger import get_logger
 
@@ -81,10 +99,40 @@ class NarrationSplitter:
     dialogue support.
     """
 
-    # Target ~3-4 sentences per part, max ~400 chars
-    TARGET_SENTENCES = 3
-    MAX_CHARS = 400
-    MIN_CHARS = 50  # don't create parts shorter than this unless at end
+    # ------------------------------------------------------------------
+    # P3.45.2B — duration-targeted grouping (the product target).
+    #
+    # The PRODUCT TARGET is parts of approximately 20-25 seconds of
+    # estimated speech. It is expressed in SECONDS and derived to
+    # characters through the canonical estimation rate
+    # (engine/duration_estimation — the single owner of the /15
+    # heuristic), so the grouping arithmetic and every duration
+    # estimate in the application can never drift apart:
+    #
+    #     20 s x 15 chars/s = 300 chars   (the close threshold)
+    #
+    # A group is CLOSED once its exact joined length reaches the
+    # target AND at least a target's worth of speech remains after it
+    # (lookahead — otherwise the remainder merges into the current
+    # part, so no silly short tail is produced mid-text). MAX_CHARS
+    # stays the hard accumulation cap: a group never exceeds it unless
+    # a single sentence alone is longer (that sentence becomes one
+    # honest oversized part — see _group_sentence_units).
+    #
+    # This is NOT a recalibration of the /15 heuristic (unchanged) and
+    # NOT a model hard limit (the output ceiling is max_new_tokens/25
+    # in engine/output_guard). The historical TARGET_SENTENCES/
+    # MIN_CHARS sentence-count targeting is retired by this product
+    # decision; the constants remain documented below for history.
+    # ------------------------------------------------------------------
+    TARGET_PART_SECONDS = 20.0   # lower bound of the 20-25 s product window
+    TARGET_PART_CHARS = int(TARGET_PART_SECONDS * _ESTIMATED_CHARS_PER_SECOND)  # = 300 @ 15 cps
+    MAX_CHARS = 400              # hard accumulation cap (~26.7 s @ 15 cps)
+    # Retired by P3.45.2B (kept for historical reference / compat):
+    # TARGET_SENTENCES = 3        # sentence-count targeting — replaced by
+    #                             # TARGET_PART_CHARS duration targeting
+    # MIN_CHARS = 50              # minimum group size — subsumed by the
+    #                             # lookahead merge rule
 
     # P3.44.2/P3.44.8: any inline marker (SFX / pause). Aliased to the
     # single authoritative regex in engine.sentence_boundaries (kept as
@@ -138,12 +186,18 @@ class NarrationSplitter:
                       (the user already wrote tokens). The PromptBuilder is
                       NOT called — each part's text is used as-is for the
                       prompt.
-            detect_speakers: if True, detect ``SPEAKER: text`` lines and
-                             produce one SplitPart per speaker line, with
-                             the speaker name stored in SplitPart.speaker.
-                             This takes precedence over blocks and raw_mode
-                             (a dialogue is split by speaker turns, each
-                             line becomes its own part).
+            detect_speakers: if True, detect ``$SPEAKER:`` declaration
+                             lines and split the text into speaker
+                             TURNS. Each turn's text is sentence-
+                             grouped exactly like plain narration
+                             (P3.45.2B: a long turn safely becomes
+                             several parts, ALL carrying the same
+                             speaker/character/effective state; a
+                             short turn stays one part). The speaker
+                             name is stored in SplitPart.speaker.
+                             This takes precedence over blocks and
+                             raw_mode (a dialogue is split by speaker
+                             turns).
             speaker_voice_map: optional dict mapping speaker labels to
                                 voice profile IDs. When detect_speakers is
                                 True AND this map is non-empty, only speaker
@@ -324,6 +378,21 @@ class NarrationSplitter:
         The speaker declaration line is NOT included in the TTS prompt —
         only the text below it is sent to the model.
 
+        P3.45.2B — SAFE TURN SPLITTING: a turn whose text exceeds the
+        product duration target is sentence-grouped (the same
+        authoritative scanner + grouping as plain narration) into
+        several parts. The $SPEAKER: declaration is a TURN boundary
+        that lives outside the part text, so splitting the text below
+        it preserves speaker identity, marker position and part
+        ordering by construction. Every part of a turn replicates the
+        turn's resolved effective state and Character; turn-internal
+        numbering is recorded in part_of_block/total_parts_in_block
+        (display metadata only — speaker parts remain PLAIN slots in
+        provenance, slot_id = plain:{part_index}). A turn consisting
+        of a single oversized sentence remains ONE oversized part (no
+        sub-sentence mechanism exists — surfaced by the P3.45.2A
+        preflight).
+
         CRITICAL: This method resolves Narration Block overrides for each
         speaker's text. If a block overlaps with the speaker's text range,
         the block's emotion/style/prosody override the global defaults.
@@ -404,46 +473,64 @@ class NarrationSplitter:
                     eff_delivery = block.delivery
 
             # Build the prompt for this speaker's text.
-            if raw_mode:
-                prompt = line_text
-            else:
-                from engine.prompt_state import CanonicalPromptCompiler
-                prompt_data = CanonicalPromptCompiler.compile_for_batch_part(
-                    text=line_text,
-                    global_emotion=eff_emotion,
-                    global_style=eff_style,
-                    global_speed=eff_speed,
-                    global_pitch=eff_pitch,
-                    global_delivery=eff_delivery,
-                    allow_sfx=allow_sfx,
-                )
-                prompt = prompt_data.final_prompt
-            est_duration = len(line_text) / 15.0
-            # P3.23 (design record §23): if the overlapping Narration Block
-            # carries a Character, the Character is authoritative for this
-            # part — it propagates to SplitPart.character_id so voice
-            # resolution (Block Character > speaker_voice_map > Scene >
-            # Dropdown) uses the Character's Voice Profile. $SPEAKER remains
-            # as speaker context only.
+            # P3.45.2B — a long turn is SAFE to split at sentence
+            # boundaries (the $SPEAKER: declaration is a TURN boundary
+            # that lives OUTSIDE the part text): the turn's text is
+            # sentence-grouped exactly like plain narration, and every
+            # group becomes a SplitPart that replicates the turn's
+            # speaker / character / effective semantic state. Speaker
+            # identity, marker position and part ordering are
+            # preserved by construction; slot identity is unaffected
+            # (speaker parts are plain slots — audio_provenance).
+            units = self._split_sentence_units(line_text)
+            groups = self._group_sentence_units(units)
+
             block_character_id = getattr(block, "character_id", None) \
                 if block is not None else None
-            parts.append(SplitPart(
-                text=line_text,
-                prompt=prompt,
-                block_index=None,
-                block_label=current_speaker,
-                estimated_duration=est_duration,
-                char_count=len(prompt),
-                speaker=current_speaker,
-                character_id=block_character_id,
-                is_raw=raw_mode,  # mark as raw if raw_mode was requested
-            ))
-            # Store the effective values on the part for logging/debugging
-            parts[-1].eff_emotion = eff_emotion
-            parts[-1].eff_style = eff_style
-            parts[-1].eff_speed = eff_speed
-            parts[-1].eff_pitch = eff_pitch
-            parts[-1].eff_delivery = eff_delivery
+            for g_idx, group_text in enumerate(groups):
+                if raw_mode:
+                    prompt = group_text
+                else:
+                    from engine.prompt_state import CanonicalPromptCompiler
+                    prompt_data = CanonicalPromptCompiler.compile_for_batch_part(
+                        text=group_text,
+                        global_emotion=eff_emotion,
+                        global_style=eff_style,
+                        global_speed=eff_speed,
+                        global_pitch=eff_pitch,
+                        global_delivery=eff_delivery,
+                        allow_sfx=allow_sfx,
+                    )
+                    prompt = prompt_data.final_prompt
+                est_duration = _estimate_speech_seconds(group_text)
+                # P3.23 (design record §23): if the overlapping Narration Block
+                # carries a Character, the Character is authoritative for this
+                # part — it propagates to SplitPart.character_id so voice
+                # resolution (Block Character > speaker_voice_map > Scene >
+                # Dropdown) uses the Character's Voice Profile. $SPEAKER remains
+                # as speaker context only.
+                parts.append(SplitPart(
+                    text=group_text,
+                    prompt=prompt,
+                    block_index=None,
+                    block_label=current_speaker,
+                    estimated_duration=est_duration,
+                    char_count=len(prompt),
+                    speaker=current_speaker,
+                    character_id=block_character_id,
+                    is_raw=raw_mode,  # mark as raw if raw_mode was requested
+                    # P3.45.2B: turn-internal numbering (metadata only —
+                    # slot identity for speaker parts is plain:{part_index},
+                    # never derived from these fields).
+                    part_of_block=g_idx + 1,
+                    total_parts_in_block=len(groups),
+                ))
+                # Store the effective values on the part for logging/debugging
+                parts[-1].eff_emotion = eff_emotion
+                parts[-1].eff_style = eff_style
+                parts[-1].eff_speed = eff_speed
+                parts[-1].eff_pitch = eff_pitch
+                parts[-1].eff_delivery = eff_delivery
             current_text_lines = []
 
         for line in lines:
@@ -501,7 +588,7 @@ class NarrationSplitter:
         groups = self._group_sentence_units(units)
 
         for group_text in groups:
-            est_duration = len(group_text) / 15.0
+            est_duration = _estimate_speech_seconds(group_text)
             parts.append(SplitPart(
                 text=group_text,
                 prompt=group_text,  # raw: text == prompt
@@ -570,7 +657,7 @@ class NarrationSplitter:
                 )
                 prompt = prompt_data.final_prompt
 
-                est_duration = len(group_text) / 15.0  # ~15 chars/sec estimate
+                est_duration = _estimate_speech_seconds(group_text)  # canonical estimate (engine/duration_estimation)
                 # P3.23 (design record §23): if the block carries a Character
                 # and no $SPEAKER label exists, the speaker field is populated
                 # with the Character name for context and History ("If
@@ -639,7 +726,7 @@ class NarrationSplitter:
             )
             prompt = prompt_data.final_prompt
 
-            est_duration = len(group_text) / 15.0
+            est_duration = _estimate_speech_seconds(group_text)
             parts.append(SplitPart(
                 text=group_text,
                 prompt=prompt,
@@ -694,8 +781,9 @@ class NarrationSplitter:
     # Group sentences into parts
     # ------------------------------------------------------------------
     def _group_sentence_units(self, units: List[tuple]) -> List[str]:
-        """Group ``(sentence, separator)`` units into parts of
-        ~TARGET_SENTENCES or ~MAX_CHARS.
+        """Group ``(sentence, separator)`` units into parts targeting the
+        P3.45.2B product duration (approximately 20-25 s of estimated
+        speech at the canonical rate).
 
         P3.44.8 — EXACT-TEXT PRESERVATION: sentences joined into one
         part are joined with their ORIGINAL separators
@@ -708,23 +796,42 @@ class NarrationSplitter:
         same part; at a part boundary the separator is the split point
         and is dropped (as before).
 
-        Rules (unchanged):
-        - Accumulate sentences until target reached
-        - If a single sentence exceeds MAX_CHARS, it gets its own part
+        Rules (P3.45.2B):
+        - Accumulate sentences until the group's exact joined length
+          reaches ``TARGET_PART_CHARS`` (20 s at the canonical rate)
+        - CLOSE the group only when at least a target's worth of speech
+          remains AFTER it (lookahead): a small remainder MERGES into
+          the current group instead of producing a silly short tail
+          part mid-text. Consequence: any text of at most MAX_CHARS
+          always yields exactly ONE part.
+        - If adding a sentence would exceed ``MAX_CHARS`` (~26.7 s),
+          flush the group first (the hard cap — unchanged semantics)
+        - A single sentence longer than MAX_CHARS gets its own part and
+          is NEVER cut (no sub-sentence mechanism exists — text
+          integrity beats the duration target; the P3.45.2A preflight
+          surfaces the oversized part honestly)
         - Never cut inside a sentence
-        - Don't create parts shorter than MIN_CHARS unless it's the last
         """
         if not units:
             return []
+
+        # Lookahead basis: suffix totals of the sentence OWN chars
+        # (separators are dropped at part boundaries, so they never
+        # count toward either side of the target decision).
+        suffix = [0] * (len(units) + 1)
+        for i in range(len(units) - 1, -1, -1):
+            suffix[i] = suffix[i + 1] + len(units[i][0])
 
         groups: List[str] = []
         current: List[tuple] = []
         current_chars = 0   # length of the exact joined text so far
 
-        for sentence, sep in units:
+        for idx, (sentence, sep) in enumerate(units):
             sent_chars = len(sentence)
 
             # If this single sentence is very long, give it its own part
+            # (uncapped — the honest oversized fallback; no character
+            # slicing, no sub-sentence invention).
             if sent_chars > self.MAX_CHARS:
                 # First flush current group
                 if current:
@@ -739,7 +846,7 @@ class NarrationSplitter:
             # replaces the old "+1 for space" approximation).
             join_sep_len = len(current[-1][1]) if current else 0
 
-            # Check if adding this sentence would exceed MAX_CHARS
+            # Check if adding this sentence would exceed the hard cap
             if current and current_chars + join_sep_len + sent_chars > self.MAX_CHARS:
                 # Flush current group
                 groups.append(self._join_units(current))
@@ -750,8 +857,13 @@ class NarrationSplitter:
             current.append((sentence, sep))
             current_chars += join_sep_len + sent_chars
 
-            # Check if we've reached the target sentence count
-            if len(current) >= self.TARGET_SENTENCES and current_chars >= self.MIN_CHARS:
+            # Duration target reached AND enough speech remains to form
+            # another target-sized part -> close here (P3.45.2B).
+            # Otherwise keep accumulating: the remainder will merge
+            # into this group (bounded by the hard cap above).
+            remaining_after = suffix[idx + 1]
+            if (current_chars >= self.TARGET_PART_CHARS
+                    and remaining_after >= self.TARGET_PART_CHARS):
                 groups.append(self._join_units(current))
                 current = []
                 current_chars = 0

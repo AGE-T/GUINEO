@@ -56,6 +56,13 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+# P3.45.2B — the canonical speech-duration heuristic imported from its
+# ONE owner (engine/duration_estimation). The local name is kept as an
+# alias for existing importers/tests that reference
+# output_guard.ESTIMATED_CHARS_PER_SECOND; the OBJECT is the canonical
+# one (identity pinned by tests — no second constant exists anywhere).
+from engine.duration_estimation import ESTIMATED_CHARS_PER_SECOND
+
 # ---------------------------------------------------------------------------
 # Model constants (research/bosonai_higgs-tts-v3-4b_README.md)
 # ---------------------------------------------------------------------------
@@ -115,20 +122,17 @@ FRAME_RMS_THRESHOLD_DBFS = -50.0
 #
 # Text-duration basis: the project's EXISTING heuristic of ~15 characters
 # per second of audio — the SAME figure NarrationSplitter uses for
-# SplitPart.estimated_duration at its four split sites. This is P3.45.2A
-# CONSUMPTION of the existing heuristic, not a redesign: the heuristic
-# itself, the preview estimator displays and Assemble duration labels
-# belong to P3.45.2B and remain untouched. The basis actually used is
-# reported in the result (input_basis / basis_chars) so no caller can
-# misrepresent an estimate as a measurement.
+# SplitPart.estimated_duration at its four split sites. Since P3.45.2B
+# the constant lives in engine.duration_estimation (the ONE canonical
+# source, imported above). This module CONSUMES the heuristic, it does
+# not own it. The basis actually used is reported in the result
+# (input_basis / basis_chars) so no caller can misrepresent an estimate
+# as a measurement.
 #
 # No WARNING percentage band is invented (task rule: no arbitrary
 # thresholds). WARNING means EXACTLY at the ceiling — the only boundary
 # that is technically derivable without new data. A softer warning
 # threshold remains a later UX/data decision.
-
-# The existing house heuristic (chars per second of speech) — see above.
-ESTIMATED_CHARS_PER_SECOND = 15.0
 
 # Preflight states (P3.45.2A contract):
 PREFLIGHT_SAFE = "safe"          # estimate below the ceiling

@@ -631,7 +631,13 @@ class AssembleScenesDialog(QDialog):
 
         layout.addWidget(output_group)
 
-        # --- Total estimated duration (§41) ---
+        # --- Total duration (§41) ---
+        # P3.45.2B wording correction: the §41 total is the sum of the
+        # MEASURED durations of the resolved scene outputs plus the
+        # configured inter-scene gap — a measured aggregate, NOT an
+        # estimate (the historical "estimated" label/comment mislabelled
+        # measured file durations; the user-visible string "Total: …"
+        # was always neutral). No behaviour change.
         self._total_label = QLabel("Total: 00:00:00")
         self._total_label.setStyleSheet(
             "color: {0}; font-size: 13px; font-weight: bold; "
@@ -839,7 +845,14 @@ class AssembleScenesDialog(QDialog):
         self._update_totals()
 
     def _update_totals(self) -> None:
-        """Live total estimated duration (§41) + Assemble button state (§53)."""
+        """Live total duration (§41) + Assemble button state (§53).
+
+        P3.45.2B wording correction: the total aggregates the MEASURED
+        durations of the selected rows' resolved outputs (scene combined
+        entries / assets — measured from the written files) plus the
+        configured inter-scene gap — a measured aggregate, not an
+        estimate (the historical docstring said "estimated").
+        """
         selected = self._selected_rows()
         total = sum(r.duration for r in selected)
         gap = self._gap_slider.value() / 10.0

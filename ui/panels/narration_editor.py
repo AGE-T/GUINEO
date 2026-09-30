@@ -40,6 +40,7 @@ from engine.narration_block_manager import NarrationBlockManager
 from engine.prompt_optimizer import PromptOptimizer
 from engine.prompt_builder import PromptBuilder
 from engine.character_colors import get_character_color
+from engine.duration_estimation import estimate_speech_seconds
 
 
 # ---------------------------------------------------------------------------
@@ -2106,7 +2107,21 @@ class NarrationEditor(QWidget):
         import re
         token_count = len(re.findall(r"<\|\w+:\w+\|>", final_prompt))
         prompt_len = len(final_prompt)
-        est_duration = prompt_len / 15.0
+        # P3.45.2B — the "Est. duration" is the CANONICAL speech-time
+        # estimate of the document's PLAIN text (engine/duration_estimation
+        # — the same semantic quantity and the same text basis the
+        # NarrationSplitter estimates per part). It previously measured
+        # the COMPILED prompt, counting prepended control tokens
+        # (<|emotion:...|> etc.) as speech — +25 % for a single
+        # Fear-override block, up to +102 % for token-heavy state —
+        # so the same text showed a different "estimated duration" in
+        # the Preview stats than in the Generate Long part headers.
+        # "Prompt length"/"Tokens" still describe the prompt (their own
+        # labelled quantities); only the duration estimate changed basis.
+        # Known limitation: block SFX/pause metadata is materialised at
+        # split time (marker chars counted by part estimates), while the
+        # stats measure the editor text as the user sees it.
+        est_duration = estimate_speech_seconds(text)
         block_count = len(self._block_manager.blocks) if self._block_manager.blocks else 1
         self._stats_label.setText(
             "Prompt length: {0} chars  |  Tokens: {1}  |  Blocks: {2}  |  "

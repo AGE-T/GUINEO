@@ -2612,3 +2612,72 @@ No backlog items were removed in this round.
   `__spec__`) is an environment task, not a product change.
 
 No backlog items were removed in this round.
+
+## P3.45.2B round — duration estimation + splitter consistency
+
+### P3.45.2B — Six duration-estimate sites, two text bases, frozen dialog estimates, sub-target part sizes, unsplittable-but-unguarded speaker turns (CLOSED for the audited paths)
+
+The P3.45.2B code-level audit (at `5a6e5f3`) confirmed and fixed:
+
+1. **Two text bases for one quantity** — the Preview stats estimated
+   the TOKENIZED prompt (prepended control tokens counted as speech:
+   +25 % measured for a single Fear block, +102 % in the P3.45 triage)
+   while the splitter estimated the plain part text; `char_count`
+   (prompt) and `estimated_duration` (text) shared one dialog header
+   line. FIXED: `engine/duration_estimation.py` is the ONE canonical
+   estimator (`ESTIMATED_CHARS_PER_SECOND = 15.0` — uncalibrated,
+   single owner; `output_guard` imports the object, identity pinned);
+   the Preview stats now use the plain-text basis.
+2. **Parts below the product target** — the 3-sentence grouping
+   produced ~13 s typical parts. FIXED: duration-targeted grouping
+   (`TARGET_PART_CHARS = 300` derived from `20 s × 15 cps`, lookahead
+   merge, `MAX_CHARS = 400` cap unchanged) → typical parts 20–26.7 s.
+   This is a PRODUCT TARGET — no model hard limit was invented.
+3. **Speaker-turn bypass** — one part regardless of size. FIXED:
+   sentence-grouped with speaker/character/effective-state replication;
+   plain slots; the 2A unpunctuated-giant-turn case still yields ONE
+   honestly-blocked part.
+4. **Stale estimates** — dialog part edit and Batch prompt edit never
+   recomputed `estimated_duration`/`expected_duration` (the R2 guard's
+   expectation). FIXED: live header refresh + Generate-time recompute;
+   `JobEditDialog.apply_to_job` recompute; queue YAML consistency.
+5. **§41 mislabel** — comment-only fix (measured aggregate was called
+   "estimated"; user-visible string was neutral).
+
+`duplicate_job` still strips `expected_duration` **deliberately**
+(P3.44.6 manual/structural split — unchanged, documented).
+
+Residuals (evidence-based, no action this round):
+- The `/15` heuristic errs in both directions (±10 s empirically) —
+  every message discloses which number is an estimate.
+- Long-dialog Generate re-check stays on the plain part text (2A's
+  documented basis): a token-inflated prompt exactly at the ceiling
+  edge (≈1–6 s window) can pass as safe — only reachable by
+  ~2400+-char parts (the pathological oversized cases).
+- Block SFX/pause metadata materialises at split time: part estimates
+  count marker chars, the Preview stats measure the editor text as
+  seen (documented divergence, marker chars only).
+- Speaker turns spanning multiple blocks resolve overrides against
+  the first overlapping block (pre-existing, unchanged).
+- End-of-text tail parts can be shorter than the target (historical
+  "unless at end" exemption, bounded by the cap).
+
+### Environment / pre-existing failures observed during the P3.45.2B validation (recorded, NOT P3.45.2B regressions)
+
+- **`tools/verify_integration.py` FAILS** with
+  `after stop(), job j1 status=pending (expected SKIPPED)` — proven
+  IDENTICAL on the pristine `5a6e5f3` tree via `git stash` (the 2A
+  round did not run this tool, so it was unrecorded). Pre-existing;
+  needs its own evidence-first investigation (batch stop semantics).
+- **`test_p3_44_4_batch_execution_run.py::
+  TestStopSemantics::test_regen_run_stop_leaves_others_pending`** is
+  timing-flaky: proven failing 2/8 runs on the pristine `5a6e5f3`
+  tree (green 12/12 in the same-session isolated full-file run).
+- **SS-3** (`test_p3_37_branding_documentation.py::
+  test_readme_has_british_english_section`) — the preregistered
+  pre-existing failure, unchanged.
+- The P3.45.2A-era venv drift note (P3.43/P3.44-history collection
+  errors) is OBSOLETE in the rebuilt environment: all 56 test files
+  collect (1659 tests) and both files run green in the full battery.
+
+No backlog items were removed in this round.

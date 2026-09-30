@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from ui.theme import Palette
 from engine.narration_splitter import SplitPart
 from engine.models import VoiceProfile
+from engine.duration_estimation import estimate_speech_seconds
 
 
 class LongNarrationDialog(QDialog):
@@ -71,6 +72,16 @@ class LongNarrationDialog(QDialog):
         # had explicitly suppressed.
         self._allow_sfx = bool(allow_sfx)
         self._editors: List[QTextEdit] = []
+        # P3.45.2B — live estimate refresh: the per-part header labels
+        # and the aggregate header are rebuilt when the user edits a
+        # part (the split-time numbers were previously frozen at dialog
+        # construction — a proven stale surface).
+        self._part_headers: List[QLabel] = []
+        self._total_header: Optional[QLabel] = None
+        self._header_is_multi = False
+        self._header_speaker_count = 0
+        # P3.45.2A limit note (kept for live re-evaluation on edit).
+        self._limit_note: Optional[QLabel] = None
         # speaker label -> QComboBox (for reading the mapping on generate)
         self._speaker_combos: Dict[str, QComboBox] = {}
         # P3.28 §10 (design record Rec 11): "Review before generating".
@@ -102,7 +113,12 @@ class LongNarrationDialog(QDialog):
         is_multi = len(speakers) > 0
 
         # --- Header ---
-        total_est = sum(p.estimated_duration for p in self._parts)
+        # P3.45.2B: the aggregate estimate is the sum of the CURRENT
+        # part estimates (canonical estimator); it is refreshed live
+        # while the user edits (see _on_part_text_changed).
+        total_est = sum(estimate_speech_seconds(p.text) for p in self._parts)
+        self._header_is_multi = is_multi
+        self._header_speaker_count = len(speakers)
         if is_multi:
             header_text = (
                 "🎙 Multi-speaker dialogue  |  "
@@ -117,6 +133,7 @@ class LongNarrationDialog(QDialog):
                     len(self._parts), total_est,
                     self._voice_name or "(no voice)")
         header = QLabel(header_text)
+        self._total_header = header
         header.setStyleSheet(
             "font-size: 14px; font-weight: bold; color: {0};".format(
                 Palette.TEXT_PRIMARY))
@@ -160,11 +177,13 @@ class LongNarrationDialog(QDialog):
                 "color: {0}; font-size: 11px;".format(Palette.WARNING))
             limit_note.setWordWrap(True)
             layout.addWidget(limit_note)
+            self._limit_note = limit_note
 
         # --- Info label ---
         if is_multi:
             info = QLabel(
-                "Each speaker line becomes a separate generation job with the "
+                "Each speaker turn becomes one or more generation jobs "
+                "(long turns are split at sentence boundaries) with the "
                 "assigned voice.\nSpeaker switches use the configured "
                 "inter-part silence from settings (no crossfade).\n"
                 "Edit any part's text below before generating.")
@@ -441,45 +460,19 @@ class LongNarrationDialog(QDialog):
         # eff_speed, eff_pitch, eff_delivery on SplitPart). It is DISPLAY
         # ONLY — it does not modify part.text, part.prompt, or the semantic
         # state. See _build_token_display_html for details.
-        header_text = "Part {0}".format(index + 1)
-        if part.speaker:
-            header_text += "  |  🎙 {0}".format(part.speaker)
-        elif part.block_label:
-            header_text += "  |  {0}".format(part.block_label)
-        header_text += "  |  ~{0:.0f}s".format(part.estimated_duration)
-
-        # Effective token display (compact, colored, human-readable).
-        token_html = self._build_token_display_html(part)
-        if token_html:
-            header_text += '  |  {0}'.format(token_html)
-
-        header_text += "  |  {0} chars".format(part.char_count)
-
-        # P3.45.2A — oversized-part marker (split-time basis, same basis
-        # as the "~Xs" above; verdicts computed once in _build_ui).
-        verdict = (self._preflight_verdicts[index]
-                   if index < len(self._preflight_verdicts) else None)
-        if verdict and verdict.get("state") in ("warning", "blocked"):
-            limit = verdict.get("maximum_output_seconds") or 0.0
-            est = verdict.get("estimated_request_seconds") or 0.0
-            if verdict.get("state") == "warning":
-                marker = ('<span style="color:{0}; font-weight:bold;">'
-                          "⚠ ~{1:.0f}s — exactly at the ~{2:.0f}s "
-                          "single-output limit</span>").format(
-                              Palette.WARNING, est, limit)
-            else:
-                marker = ('<span style="color:{0}; font-weight:bold;">'
-                          "⚠ ~{1:.0f}s exceeds the ~{2:.0f}s single-output "
-                          "limit</span>").format(
-                              Palette.WARNING, est, limit)
-            header_text += '  |  {0}'.format(marker)
-
-        header = QLabel(header_text)
+        #
+        # P3.45.2B — the "~Xs" estimate and the char count describe the
+        # CURRENT editor text on ONE basis (the canonical plain-text
+        # estimator): both numbers are rebuilt live while the user edits
+        # (_on_part_text_changed), so no stale value is ever shown next
+        # to text the user just changed.
+        header = QLabel(self._part_header_text(index, part))
         header.setTextFormat(Qt.TextFormat.RichText)
         header.setStyleSheet(
             "font-weight: bold; color: {0}; font-size: 11px;".format(
                 Palette.ACCENT))
         layout.addWidget(header)
+        self._part_headers.append(header)
 
         # Editable text — shows the PLAIN TEXT (not the tokenized prompt).
         # The user edits dialogue text, not Higgs tokens. The tokenized
@@ -496,6 +489,15 @@ class LongNarrationDialog(QDialog):
                 Palette.BG_SURFACE_ALT, Palette.TEXT_PRIMARY, Palette.BORDER))
         layout.addWidget(editor)
         self._editors.append(editor)
+        # P3.45.2B — LIVE ESTIMATE REFRESH: rebuild this part's header
+        # (estimate + chars + oversized marker) and the aggregate header
+        # whenever the user edits the text. The split-time numbers were
+        # previously frozen at construction — the header kept showing
+        # the pre-edit estimate next to text the user had just changed,
+        # and the stale value silently flowed into
+        # BatchJob.expected_duration at Generate time.
+        editor.textChanged.connect(
+            lambda i=index: self._on_part_text_changed(i))
 
         # Silence indicator
         silence_label = QLabel("+ 0.5s silence (automatic)")
@@ -504,6 +506,150 @@ class LongNarrationDialog(QDialog):
         layout.addWidget(silence_label)
 
         return frame
+
+    # ------------------------------------------------------------------
+    # P3.45.2B — live header construction / refresh
+    # ------------------------------------------------------------------
+    def _part_header_text(self, index: int, part: SplitPart,
+                          live_text: Optional[str] = None) -> str:
+        """Build one part's header line (rich text).
+
+        The "~Xs" estimate and the char count are computed from
+        ``live_text`` (the CURRENT editor content; defaults to the
+        part's split-time text) through the canonical estimator, so the
+        header always describes the text the user actually sees — and
+        the "N chars" basis is the SAME plain-text basis as the "~Xs"
+        (the historical display mixed prompt-chars with a text-based
+        estimate in one line).
+
+        The P3.45.2A oversized marker is re-classified for the same
+        live text (the same pure function and basis the Generate-click
+        re-check uses), keeping header markers truthful after edits.
+        """
+        text = live_text if live_text is not None else (part.text or "")
+        est = estimate_speech_seconds(text)
+
+        header_text = "Part {0}".format(index + 1)
+        if part.speaker:
+            header_text += "  |  🎙 {0}".format(part.speaker)
+        elif part.block_label:
+            header_text += "  |  {0}".format(part.block_label)
+        header_text += "  |  ~{0:.0f}s".format(est)
+
+        # Effective token display (compact, colored, human-readable) —
+        # derived from the part's resolved semantic state (unchanged
+        # by text edits; the state is re-applied at prompt rebuild).
+        token_html = self._build_token_display_html(part)
+        if token_html:
+            header_text += '  |  {0}'.format(token_html)
+
+        header_text += "  |  {0} chars".format(len(text))
+
+        # P3.45.2A oversized-part marker — same basis as the "~Xs"
+        # above (the live text). When called at build time the verdict
+        # is the split-time classification (identical basis); when
+        # called from the live refresh the verdict is re-classified
+        # from the SAME pure function the Generate-click re-check uses.
+        verdict = (self._preflight_verdicts[index]
+                   if index < len(self._preflight_verdicts) else None)
+        if verdict and verdict.get("state") in ("warning", "blocked"):
+            limit = verdict.get("maximum_output_seconds") or 0.0
+            vest = verdict.get("estimated_request_seconds") or 0.0
+            if verdict.get("state") == "warning":
+                marker = ('<span style="color:{0}; font-weight:bold;">'
+                          "⚠ ~{1:.0f}s — exactly at the ~{2:.0f}s "
+                          "single-output limit</span>").format(
+                              Palette.WARNING, vest, limit)
+            else:
+                marker = ('<span style="color:{0}; font-weight:bold;">'
+                          "⚠ ~{1:.0f}s exceeds the ~{2:.0f}s single-output "
+                          "limit</span>").format(
+                              Palette.WARNING, vest, limit)
+            header_text += '  |  {0}'.format(marker)
+        return header_text
+
+    def _on_part_text_changed(self, index: int) -> None:
+        """P3.45.2B live refresh for one edited part.
+
+        Rebuilds (a) the part's header — estimate, char count and the
+        oversized marker all on the CURRENT text basis, (b) the
+        aggregate header total, (c) the P3.45.2A limit note visibility.
+        Never mutates part.text/prompt/char_count (that happens at
+        Generate — the emitted values are recomputed there from the
+        same canonical estimator, so what the user saw is what flows
+        into BatchJob.expected_duration).
+        """
+        if not (0 <= index < len(self._editors)):
+            return
+        text = self._editors[index].toPlainText()
+        part = self._parts[index]
+
+        # Re-classify the ceiling verdict for the CURRENT text (the
+        # same pure function + basis as the Generate-click re-check;
+        # import/exception failure keeps the previous verdict — the
+        # Generate re-check remains the truth gate).
+        try:
+            from engine.output_guard import preflight_generation_size
+            verdict = preflight_generation_size(
+                text=text,
+                max_new_tokens=(self._generation_parameters.max_new_tokens
+                                if self._generation_parameters is not None
+                                else None),
+            )
+            if index < len(self._preflight_verdicts):
+                self._preflight_verdicts[index] = verdict
+            else:
+                self._preflight_verdicts.append(verdict)
+        except Exception:
+            pass
+
+        if index < len(self._part_headers):
+            self._part_headers[index].setText(
+                self._part_header_text(index, part, live_text=text))
+
+        self._refresh_aggregate_header()
+
+    def _refresh_aggregate_header(self) -> None:
+        """Rebuild the top aggregate header + limit note from the
+        CURRENT editor texts (P3.45.2B — the total was previously
+        frozen at dialog construction)."""
+        if self._total_header is not None:
+            total_est = sum(
+                (estimate_speech_seconds(e.toPlainText())
+                 for e in self._editors),
+            ) if self._editors else 0.0
+            if self._header_is_multi:
+                header_text = (
+                    "🎙 Multi-speaker dialogue  |  "
+                    "{0} parts  |  {1} speakers  |  "
+                    "Estimated: ~{2:.0f}s").format(
+                        len(self._parts), self._header_speaker_count,
+                        total_est)
+            else:
+                header_text = (
+                    "{0} parts will be generated  |  "
+                    "Estimated total: ~{1:.0f}s  |  "
+                    "Voice: {2}").format(
+                        len(self._parts), total_est,
+                        self._voice_name or "(no voice)")
+            self._total_header.setText(header_text)
+
+        # Limit note visibility: shown while ANY current verdict is
+        # flagged, hidden otherwise (the split-time note previously
+        # stayed visible even after every flagged part was shrunk).
+        flagged = [v for v in self._preflight_verdicts
+                   if v and v.get("state") in ("warning", "blocked")]
+        if self._limit_note is not None:
+            if flagged:
+                limit = flagged[0].get("maximum_output_seconds")
+                tokens = flagged[0].get("effective_max_new_tokens")
+                self._limit_note.setText(
+                    "Single-output limit: ~{0:.0f}s (max_new_tokens={1}) — "
+                    "parts marked ⚠ exceed it.".format(limit or 0,
+                                                        tokens or "?"))
+                self._limit_note.show()
+            else:
+                self._limit_note.hide()
 
     def _get_speaker_voice_map(self) -> dict:
         """Read the speaker→voice_id mapping from the combo boxes.
@@ -589,6 +735,13 @@ class LongNarrationDialog(QDialog):
                     except Exception:
                         p.prompt = text
                 p.char_count = len(p.prompt)
+                # P3.45.2B — recompute the part's estimate from the
+                # EDITED text through the canonical estimator: this is
+                # the value MainWindow copies into
+                # BatchJob.expected_duration (the output guard R2
+                # comparison basis). Previously the SPLIT-TIME estimate
+                # of the PRE-EDIT text was emitted — silently stale.
+                p.estimated_duration = estimate_speech_seconds(text)
                 parts.append(p)
 
         if not parts:

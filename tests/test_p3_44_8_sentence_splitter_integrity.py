@@ -674,10 +674,17 @@ class TestSplitPipeline(unittest.TestCase):
         self.assertEqual(parts[0].text, text)
 
     def test_split_plain_long_text_exact_and_uncut(self):
-        text = ("A GLM 5.2-t használtam, mert gyors. Az érték 3.14 lett "
+        # P3.45.2B: the text must exceed the 400-char hard cap (not just
+        # the old 3-sentence target) to force a multi-part split under
+        # the duration-targeted grouping — the sentence set is repeated
+        # so the exact-slice and reconstruction assertions still
+        # exercise text spanning several parts.
+        unit = ("A GLM 5.2-t használtam, mert gyors. Az érték 3.14 lett "
                 "belőle. Látogasd meg a test.hu oldalt. U.S.A. is known "
                 "for this too. Az ára 12.50 volt. Még egy mondat jön most "
-                "ide. Egy újabb mondat következik. Vége a szövegnek.")
+                "ide. Egy újabb mondat következik. Vége a szövegnek. ")
+        text = unit * 3
+        self.assertGreater(len(text), 400)
         parts = self.splitter.split(text=text)
         self.assertGreater(len(parts), 1)
         for p in parts:
@@ -759,8 +766,14 @@ class TestSplitPipeline(unittest.TestCase):
         # New rule: exactly 12 real sentences.
         self.assertEqual(len(split_sentences(text)), 12)
         new_parts = self.splitter.split(text=text)
-        # 12 sentences / TARGET_SENTENCES(3) -> 4 parts, never 48/3=16.
-        self.assertEqual(len(new_parts), 4)
+        # P3.45.2B (duration-targeted grouping): the whole 324-char text
+        # is below the 400-char hard cap, so the target/lookahead rules
+        # keep it as ONE part (the historical sentence-count targeting —
+        # 12 sentences / TARGET_SENTENCES(3) -> 4 parts — was retired by
+        # the 20-25 s product target). The test's PURPOSE is unchanged
+        # and amplified: decimals never inflate the part count — 1 part,
+        # never 48 fragments (and never the old 4).
+        self.assertEqual(len(new_parts), 1)
         self.assertLess(len(new_parts), 16)
         for p in new_parts:
             self.assertIn(p.text, text)
