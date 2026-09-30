@@ -148,8 +148,20 @@ def visible_checks(dlg):
 
 
 def internal_checks(dlg, n=None):
+    # P3.45.4 (documented update): _check_states is JOB-KEYED (slot id for
+    # structural jobs, object identity for manual rows) — derive each
+    # row's state through the job at that row, exactly as the production
+    # checkbox sync does. The visible/internal equality contract this
+    # suite pins is unchanged.
     n = n if n is not None else dlg._table.rowCount()
-    return [bool(dlg._check_states.get(i, False)) for i in range(n)]
+    return [bool(dlg._check_states.get(
+        dlg._check_key(dlg._manager.jobs[i]), False)) for i in range(n)]
+
+
+def job_key(dlg, row):
+    """P3.45.4 (documented update): the check-state key of the job at
+    ``row`` — replaces the pre-P3.45.4 raw row-index writes."""
+    return dlg._check_key(dlg._manager.jobs[row])
 
 
 def gen_pill_rows(dlg):
@@ -389,7 +401,7 @@ class TestSelectionSync(_Harness):
         dlg._refresh_table()
         self.assertEqual(visible_checks(dlg), [True, False, True])
         # Programmatic state change + refresh -> visible follows.
-        dlg._check_states[2] = False
+        dlg._check_states[job_key(dlg, 2)] = False
         dlg._refresh_table()
         self.assertEqual(visible_checks(dlg), [True, False, False])
 
@@ -397,7 +409,7 @@ class TestSelectionSync(_Harness):
         """After a full run the selection is intact and re-enabled."""
         dlg = self.generate(["First part.", "Second part.", "Third part."])
         dlg._on_select_none()
-        dlg._check_states[0] = True
+        dlg._check_states[job_key(dlg, 0)] = True
         dlg._refresh_table()
         self.assertEqual(visible_checks(dlg), [True, False, False])
         dlg._on_start()  # generate only row 0
@@ -411,7 +423,7 @@ class TestSelectionSync(_Harness):
         dlg = self.generate(["Part one.", "Part two.", "Part three.",
                              "Part four."])
         dlg._on_select_none()
-        dlg._check_states[2] = True
+        dlg._check_states[job_key(dlg, 2)] = True
         dlg._refresh_table()
         dlg._on_start()  # only row 2 generates
         # refresh the table mid-run the way refresh_scene_context does
@@ -657,7 +669,7 @@ class TestInPlaceWidgetIdentity(_Harness):
         dlg = self.generate(["Identity part one.", "Identity part two."])
         # complete a run so a job has a non-trivial state
         dlg._on_select_none()
-        dlg._check_states[0] = True
+        dlg._check_states[job_key(dlg, 0)] = True
         dlg._refresh_table()
         dlg._on_start()
         self.wait_batch()
@@ -672,7 +684,7 @@ class TestInPlaceWidgetIdentity(_Harness):
             rebuild_calls.append(1), orig_rebuild(jobs))[1]
 
         # a structure-unchanged manager update (status/summary only)
-        dlg._check_states[1] = True
+        dlg._check_states[job_key(dlg, 1)] = True
         dlg._refresh_table()
 
         self.assertEqual(rebuild_calls, [],

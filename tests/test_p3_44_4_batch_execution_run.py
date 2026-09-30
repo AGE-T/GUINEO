@@ -247,9 +247,17 @@ class _Harness(unittest.TestCase):
         return self.win._batch_dialog
 
     def select_only(self, dlg, indices):
-        """Set the authoritative checkbox state to EXACTLY ``indices``."""
-        dlg._check_states = {i: (i in set(indices))
-                             for i in range(dlg._table.rowCount())}
+        """Set the authoritative checkbox state to EXACTLY ``indices``.
+
+        P3.45.4 (documented update): _check_states is JOB-KEYED (slot id
+        for structural jobs, object identity for manual rows) — build the
+        dict through the dialog's own key derivation so the selection
+        lands on the intended JOB OBJECTS, not on row positions."""
+        want = set(indices)
+        dlg._check_states = {
+            dlg._check_key(job): (i in want)
+            for i, job in enumerate(dlg._manager.jobs)
+        }
 
     def wait_batch(self, timeout=30):
         bm = self.win._batch_manager

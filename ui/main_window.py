@@ -6019,6 +6019,12 @@ class MainWindow(QMainWindow):
             self._toolbar.refresh_theme()
         if self._top_nav is not None:
             self._top_nav.refresh_theme()
+        # P3.45.4 (D-R6): the editor's block stripes are extra-selection
+        # formats computed at highlight time — re-derive them so the new
+        # theme's surface tokens apply immediately (same convention as the
+        # toolbar/top_nav refresh above).
+        if self._editor is not None:
+            self._editor.refresh_theme()
 
         # Gate the ambient timer by theme (only run for translucent themes)
         self._update_ambient_for_theme(theme_id)
@@ -6082,6 +6088,10 @@ class MainWindow(QMainWindow):
             self._toolbar.refresh_theme()
         if self._top_nav is not None:
             self._top_nav.refresh_theme()
+        # P3.45.4 (D-R6): re-derive the editor's Palette-derived block
+        # stripes immediately after the Settings-dialog theme change.
+        if self._editor is not None:
+            self._editor.refresh_theme()
 
         # Gate the ambient timer by theme (only run for translucent themes)
         self._update_ambient_for_theme(theme_name)

@@ -821,7 +821,9 @@ class SfxBatchStateRevalidationTests(_MWHarness):
             # The scene-mode Start button is "GENERATE CHECKED" — with
             # all rows checked it must RESUME the paused run (not block
             # on the already-running modal).
-            dlg._check_states.update({i: True for i in range(3)})
+            # P3.45.4 (documented update): job-keyed check states.
+            dlg._check_states.update(
+                {dlg._check_key(j): True for j in dlg._manager.jobs})
             dlg._on_start()
             _process(200)
             self.assertFalse(bm.is_paused,

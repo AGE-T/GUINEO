@@ -597,8 +597,12 @@ class TestRefreshIntegrity(_MWHarness):
         self.dlg._refresh_table()
         _process(20)
         self.assertEqual(self.dlg._table.currentRow(), 5)
-        self.assertTrue(self.dlg._check_states.get(5, False),
-                        "checkbox state must survive the rebuild")
+        # P3.45.4 (documented update): job-keyed check states — resolve
+        # the row-5 job's key (the appended job lands AFTER it).
+        self.assertTrue(
+            self.dlg._check_states.get(
+                self.dlg._check_key(self.dlg._manager.jobs[5]), False),
+            "checkbox state must survive the rebuild")
         self.assertEqual(vbar.value(), min(prev_scroll, vbar.maximum()),
                          "scroll position must be restored")
 

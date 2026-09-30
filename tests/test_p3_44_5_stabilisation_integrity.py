@@ -538,7 +538,9 @@ class TestClosedReopenGeneration(_RuntimeHarness):
         cb_identity = dlg._on_changed_cb
 
         # 3-4. Select a subset (rows 0 and 1) and generate it.
-        dlg._check_states = {0: True, 1: True, 2: False, 3: False}
+        # P3.45.4 (documented update): job-keyed check states.
+        dlg._check_states = {dlg._check_key(j): v for j, v in zip(
+            dlg._manager.jobs, [True, True, False, False])}
         dlg._on_start()
         self.wait_batch()
         self.assertEqual(
@@ -560,7 +562,9 @@ class TestClosedReopenGeneration(_RuntimeHarness):
                          "once BEFORE further manager activity")
 
         # 7. Start another valid generation — this time everything.
-        reopened._check_states = {0: True, 1: True, 2: True, 3: True}
+        # P3.45.4 (documented update): job-keyed check states.
+        reopened._check_states = {reopened._check_key(j): True
+                                  for j in reopened._manager.jobs}
         reopened._on_start()
         self.assertTrue(bm.is_running)
 
@@ -617,7 +621,9 @@ class TestClosedReopenGeneration(_RuntimeHarness):
         bm = self.win._batch_manager
         FakeHiggsModel.delay_s = 0.35
         dlg = self.start_long(self.PARTS, self.scene_a, review=True)
-        dlg._check_states = {0: True, 1: True, 2: True, 3: True}
+        # P3.45.4 (documented update): job-keyed check states.
+        dlg._check_states = {dlg._check_key(j): True
+                             for j in dlg._manager.jobs}
         dlg._on_start()
         self.wait_batch()
         self.assertFalse(bm.is_running)

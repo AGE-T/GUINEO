@@ -826,6 +826,11 @@ class BatchGenerationDialog(QDialog):
         # across _refresh_table rebuilds (P3.44 §7: the in-place update
         # path keeps the checkbox WIDGETS themselves — states can never
         # be lost; the dict is the rebuild-path backup).
+        # P3.45.4 (D-R2): the dict is JOB-KEYED (see _check_key), never
+        # index-keyed — the documented "slot-keyed" contract three
+        # docstrings claimed. Index keying was PROVEN to migrate the
+        # user's checkmark to a different job on every reorder/delete/
+        # duplicate and to leave stale mappings after Load Queue.
         self._check_states: dict = {}
         self._init_check_defaults()
         # P3.44 §1/§7/§8: render-state tracking for targeted refreshes.
@@ -890,9 +895,37 @@ class BatchGenerationDialog(QDialog):
         """The Scene bound to this dialog (None in manual Batch Queue mode)."""
         return self._scene
 
+    def _check_key(self, job: BatchJob):
+        """P3.45.4 (D-R2): the identity a transient check state belongs to.
+
+        Structural jobs are keyed by their ``slot_id`` — the frozen
+        structural identity (P3.44.6) the selective-generation flow
+        reasons in ("allocates fresh versions for covered checked
+        slots"), and exactly what the pre-fix docstrings already
+        documented. Slot-less jobs (manual +Add rows, P3.44.6 duplicates
+        that deliberately strip slot provenance) have no structural id —
+        they are keyed by their Python object identity, so a duplicate
+        NEVER inherits the original's transient state and the state dies
+        with the object. NEVER the row index: reordering, deleting and
+        duplicating were all PROVEN to migrate index-keyed states onto
+        the wrong job.
+        """
+        slot_id = getattr(job, "slot_id", None)
+        if slot_id:
+            return ("slot", slot_id)
+        return ("job", id(job))
+
     def _checked_indices(self) -> list:
-        """The CHECKED row indices (derived from the current dict)."""
-        return sorted(idx for idx, val in self._check_states.items() if val)
+        """The CHECKED row indices — derived from the CURRENT job order.
+
+        P3.45.4 (D-R2): resolves each current job's key, so the result is
+        always in range and always reflects which JOB OBJECTS are checked
+        (indices are resolved at call time — the same contract
+        MainWindow's P3.44.4 selective run consumes).
+        """
+        jobs = self._manager.jobs if self._manager else []
+        return [i for i, job in enumerate(jobs)
+                if self._check_states.get(self._check_key(job), False)]
 
     def _init_check_defaults(self) -> None:
         """P3.28 §11 default selection: ONLY not-generated slots checked.
@@ -901,20 +934,23 @@ class BatchGenerationDialog(QDialog):
         never invalid (§0 product rule), so pre-checking generated slots
         would invite accidental mass re-spend. The user can select
         already-generated slots explicitly (partial regeneration — §12).
+
+        P3.45.4 (D-R2): states are written JOB-KEYED (slot id for
+        structural jobs, object identity for manual rows).
         """
         if self._scene is None or not self._manager:
             return
         try:
             from engine.audio_provenance import is_slot_covered
             from engine.batch_manager import JobStatus
-            for idx, job in enumerate(self._manager.jobs):
+            for job in self._manager.jobs:
                 slot_id = getattr(job, "slot_id", None)
                 if slot_id and self._scene is not None:
                     covered = is_slot_covered(self._scene, slot_id)
                 else:
                     covered = (job.status == JobStatus.COMPLETED)
                 # not-generated → checked; already-generated → unchecked
-                self._check_states[idx] = not covered
+                self._check_states[self._check_key(job)] = not covered
         except Exception:
             pass
 
@@ -1889,7 +1925,9 @@ class BatchGenerationDialog(QDialog):
         * signature CHANGED (jobs added/removed/moved, dialog reopen) →
           full rebuild with state preservation: current row (nearest
           surviving row when rows were removed), scroll position,
-          checkbox states (slot-keyed in scene mode), and focus is
+          checkbox states (P3.45.4: JOB-KEYED — slot id for structural
+          jobs, object identity for manual rows — so they travel with
+          the job objects across index shifts), and focus is
           returned to the table itself when a destroyed cell widget had
           it (never stolen to an unrelated widget).
 
@@ -1909,6 +1947,14 @@ class BatchGenerationDialog(QDialog):
 
     def _rebuild_table(self, jobs) -> None:
         """Full table rebuild with interaction-state preservation."""
+        # P3.45.4 (D-R2): drop check-state keys that no current job can
+        # resolve (deleted jobs, replaced manual objects, pre-Load-Queue
+        # leftovers) — unreachable keys are behavior-neutral but would
+        # accumulate over a long session. After this point the dict
+        # describes EXACTLY the current queue's jobs.
+        valid_keys = {self._check_key(j) for j in jobs}
+        self._check_states = {
+            k: v for k, v in self._check_states.items() if k in valid_keys}
         # --- capture pre-rebuild interaction state (P3.44 §7) ---------
         prev_current = self._table.currentRow()
         vbar = self._table.verticalScrollBar()
@@ -2111,9 +2157,12 @@ class BatchGenerationDialog(QDialog):
             #    setChecked is wrapped in blockSignals so the
             #    programmatic sync never re-enters _on_toggle (no
             #    recursive signal feedback).
+            #    P3.45.4 (D-R2): the lookup is JOB-KEYED — the state
+            #    follows the job object, not the row position.
             cb = refs.get("check")
             if cb is not None:
-                want = bool(self._check_states.get(i, False))
+                want = bool(self._check_states.get(
+                    self._check_key(job), False))
                 if cb.isChecked() != want:
                     cb.blockSignals(True)
                     cb.setChecked(want)
@@ -2399,7 +2448,9 @@ class BatchGenerationDialog(QDialog):
 
         Default state comes from _init_check_defaults (§11: only
         not-generated slots checked); user toggles are stored in
-        _check_states (P3.44: keyed by slot id in scene mode) and
+        _check_states JOB-KEYED (P3.45.4: slot id for structural jobs,
+        object identity for manual rows — the pre-fix docstring's
+        "slot-keyed" claim is now the actual implementation) and
         survive table rebuilds. Disabled while the batch runs.
         """
         widget = QWidget()
@@ -2408,15 +2459,16 @@ class BatchGenerationDialog(QDialog):
         layout.setSpacing(0)
         layout.setAlignment(Qt.Alignment.AlignCenter)
         checkbox = QCheckBox()
-        checkbox.setChecked(bool(self._check_states.get(idx, False)))
+        checkbox.setChecked(
+            bool(self._check_states.get(self._check_key(job), False)))
         checkbox.setEnabled(not running)
         checkbox.setToolTip(
             "Include this part in the next generation.\n"
             "Checking an already-generated part regenerates it as a NEW\n"
             "VERSION — the existing audio is never overwritten.")
 
-        def _on_toggle(checked, _idx=idx):
-            self._check_states[_idx] = bool(checked)
+        def _on_toggle(checked, _key=self._check_key(job)):
+            self._check_states[_key] = bool(checked)
             self._update_start_button()
 
         checkbox.toggled.connect(_on_toggle)
@@ -2690,15 +2742,17 @@ class BatchGenerationDialog(QDialog):
 
     def _on_select_all(self) -> None:
         """Check every part (generate everything)."""
-        for idx in range(len(self._manager.jobs)):
-            self._check_states[idx] = True
+        # P3.45.4 (D-R2): job-keyed writes (never row indices).
+        for job in self._manager.jobs:
+            self._check_states[self._check_key(job)] = True
         self._refresh_table()
         self._update_start_button()
 
     def _on_select_none(self) -> None:
         """Uncheck every part."""
-        for idx in range(len(self._manager.jobs)):
-            self._check_states[idx] = False
+        # P3.45.4 (D-R2): job-keyed writes (never row indices).
+        for job in self._manager.jobs:
+            self._check_states[self._check_key(job)] = False
         self._refresh_table()
         self._update_start_button()
 
@@ -2712,7 +2766,8 @@ class BatchGenerationDialog(QDialog):
         from PySide6.QtWidgets import QMenu
         menu = QMenu(self)
         # P3.44: derive the CHECKED row indices from the CURRENT job
-        # order (slot-keyed states survive index shifts).
+        # order (P3.45.4: job-keyed states genuinely survive index
+        # shifts — the key travels with the job object).
         checked = self._checked_indices()
         act_sel = menu.addAction(
             "Selected rows ({0})".format(len(checked)))
@@ -3023,6 +3078,17 @@ class BatchGenerationDialog(QDialog):
             # Replace the original in-place
             self._manager.remove_job(idx)
             self._manager._jobs.insert(idx, clone)  # noqa: SLF001
+            # P3.45.4 (D-R2): the transient check state belongs to the
+            # JOB. A structural job keeps its slot_id through the
+            # round-trip (same key — no transfer needed); a manual job
+            # is object-keyed and the edit REPLACED the object, so carry
+            # the user's choice over to the clone instead of silently
+            # resetting the checkbox.
+            old_key = self._check_key(original)
+            new_key = self._check_key(clone)
+            if old_key != new_key and old_key in self._check_states:
+                self._check_states[new_key] = self._check_states.pop(
+                    old_key)
             self._refresh_table()
 
     def _on_remove(self) -> None:
@@ -3094,6 +3160,13 @@ class BatchGenerationDialog(QDialog):
             return
         try:
             n = self._manager.load_from_file(path, replace=True)
+            # P3.45.4 (D-R2): the loaded file REPLACED the job list — the
+            # pre-load checkmarks were choices about DIFFERENT jobs and
+            # were PROVEN to survive as stale index→checked mappings onto
+            # the new queue. Re-derive the documented P3.28 §11 defaults
+            # for the loaded jobs (not-generated → checked).
+            self._check_states.clear()
+            self._init_check_defaults()
             FeedbackDialog.information(
                 self, "Loaded", "Batch queue loaded",
                 "{0} jobs loaded from:\n{1}".format(n, path))

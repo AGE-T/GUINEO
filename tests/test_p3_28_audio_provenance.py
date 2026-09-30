@@ -110,6 +110,15 @@ class FakeHiggsModel:
         return make_speech(FakeHiggsModel.speech_s)
 
 
+def _check_dict(dlg, flags):
+    """P3.45.4 (documented update): _check_states is JOB-KEYED (slot id
+    for structural jobs, object identity for manual rows). Build the
+    authoritative dict for the CURRENT job order from per-row flags —
+    the pre-P3.45.4 suites wrote raw row-index dicts."""
+    return {dlg._check_key(job): bool(v)
+            for job, v in zip(dlg._manager.jobs, flags)}
+
+
 def _process(ms=30):
     from PySide6.QtWidgets import QApplication
     end = time.time() + ms / 1000.0
@@ -1221,16 +1230,18 @@ class TestGenerateLongProvenance(_MWHarness):
         self.start_long(parts, review=True)
         dlg = self.dialog()
         # Fresh scene: nothing generated → ALL checked by default.
-        self.assertEqual(dlg._check_states, {0: True, 1: True, 2: True})
+        self.assertEqual(dlg._check_states,
+                         _check_dict(dlg, [True, True, True]))
         # Generate only the first two.
-        dlg._check_states = {0: True, 1: True, 2: False}
+        dlg._check_states = _check_dict(dlg, [True, True, False])
         dlg._on_start()
         self.wait_batch()
         # Re-open in review mode: covered slots UNCHECKED, uncovered CHECKED.
         self.win._batch_dialog = None
         self.start_long(parts, review=True)
         dlg = self.dialog()
-        self.assertEqual(dlg._check_states, {0: False, 1: False, 2: True})
+        self.assertEqual(dlg._check_states,
+                         _check_dict(dlg, [False, False, True]))
 
 
 class TestPartialRegeneration(_MWHarness):
@@ -1250,7 +1261,7 @@ class TestPartialRegeneration(_MWHarness):
                      for k, v in v01_files.items()}
         # Check B2 + B4 for regeneration.
         dlg = self.dialog()
-        dlg._check_states = {0: False, 1: True, 2: False, 3: True}
+        dlg._check_states = _check_dict(dlg, [False, True, False, True])
         dlg._on_start()  # GENERATE CHECKED → _on_generate_selected
         self.wait_batch()
         # B2 + B4 now have v02; B1 + B3 keep exactly one v01 asset each.
@@ -1326,7 +1337,7 @@ class TestSceneCombine(_MWHarness):
 
         # Regenerate B2 → v02 → the combined v01 becomes STALE.
         dlg = self.dialog()
-        dlg._check_states = {0: False, 1: True}
+        dlg._check_states = _check_dict(dlg, [False, True])
         dlg._on_start()
         self.wait_batch()
         stale, reasons = is_scene_combined_stale(
@@ -1360,7 +1371,7 @@ class TestSceneCombine(_MWHarness):
         parts = [_make_part(block_id="b1"), _make_part(block_id="b2")]
         self.start_long(parts, review=True)
         dlg = self.dialog()
-        dlg._check_states = {0: True, 1: False}  # only part 1 generated
+        dlg._check_states = _check_dict(dlg, [True, False])  # only part 1 generated
         dlg._on_start()
         self.wait_batch()
         from unittest.mock import patch
@@ -1377,7 +1388,7 @@ class TestSceneCombine(_MWHarness):
         self.wait_batch()
         # Regenerate as v02, then explicitly select v01.
         dlg = self.dialog()
-        dlg._check_states = {0: True}
+        dlg._check_states = _check_dict(dlg, [True])
         dlg._on_start()
         self.wait_batch()
         v01 = [a for a in self.scene.audio_assets
@@ -1520,7 +1531,7 @@ class TestConcurrencyAudit(_MWHarness):
         combined_bytes = open(combined_v01_path, "rb").read()
         # Regenerate the part while the combined output exists.
         dlg = self.dialog()
-        dlg._check_states = {0: True}
+        dlg._check_states = _check_dict(dlg, [True])
         dlg._on_start()
         self.wait_batch()
         # The combined v01 file is untouched (append-only outputs).
@@ -1539,7 +1550,7 @@ class TestConcurrencyAudit(_MWHarness):
         from unittest.mock import patch
         from PySide6.QtWidgets import QMessageBox
         dlg = self.dialog()
-        dlg._check_states = {0: True}
+        dlg._check_states = _check_dict(dlg, [True])
         with patch.object(QMessageBox, "critical", return_value=None):
             dlg._on_start()
             self.wait_batch()
@@ -1563,7 +1574,7 @@ class TestP327BVersioningRegression(_MWHarness):
         FakeHiggsModel.runaway = True
         FakeHiggsModel.speech_s = 2.0
         dlg = self.dialog()
-        dlg._check_states = {0: True}
+        dlg._check_states = _check_dict(dlg, [True])
         dlg._on_start()
         self.wait_batch()
         # New asset = v02 with its OWN filename; v01 untouched.

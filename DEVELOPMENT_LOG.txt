@@ -4275,3 +4275,121 @@ kapcsolatlan renderelés-refaktor. A P3.45.4 NEM kezdődött el.
 DOKUMENTÁCIÓ: docs/design/P3_45_3_BATCH_BLOCK_IDENTITY.md (10 szakasz);
 OPEN_BUGS.md P3.45.3 szakasz. A P3.45.3 ITT ÁLL MEG — a P3.45.4 NEM
 kezdődött el.
+
+================================================================================
+P3.45.4 — RENDERING / UX HARDENING (kódszintű audit, bizonyítékalapú
+javítások, regressziós validáció, friss build)
+================================================================================
+DÁTUM: jelen futam. ALAP: main @ 87b56f4 (P3.45.3 build-commit; origin/main
+azonos, tiszta munkafa). Környezet-helyreállítás PAT + friss klón + PySide6
+6.11.2 / pytest 9.0.2 / libEGL-shim /tmp/gllibs (a P3.45.3-akkumulátor
+60/60 zöld az alapon).
+
+AUDIT (valódi Qt-widgetek offscreen, próba: ss/audit_p3454/probe.py —
+10/10 LELOKÁLVA a tényleges HEAD-en, nem korábbi jelentésből):
+- A / D-R1: engine.app_root DUPLA property (489-492 árnyékolt + 784-786
+  hatályos, azonos törzs — tiszta duplikátum).
+- B / D-R2: _check_states INDEX-kulcsos a három slot-kulcsos docstring
+  ellenében — futásidejűleg BIZONYÍTVA: átrendezés a rossz jobra
+  vándoroltatja a pipát; törlés vándoroltat ÉS _checked_indices=[2] egy
+  2 soros táblán; duplikálás vándoroltat; Load Queue elavult index→pipa
+  leképezéseket hagyna át + soha nem vezeti le újra a dokumentált
+  P3.28 §11 alapértékeket.
+- C / D-R3: a gutter paintEvent halott `text = toPlainText()` (teljes
+  dokumentum-másolat festésenként, soha fel nem használva) + halott
+  ln_width; _block_rows / gutter mousePressEvent / _highlight_current_line
+  csak a HOSSZRA másolta a dokumentumot. Identitás lemérve:
+  len(toPlainText()) == characterCount()-1 (üres/unicode/többblokkos).
+- D / D-R4: a no-op kattintás (ugyanaz a blokk) 1 teljes viewport-
+  újrarajzolást ütemezett.
+- E / D-R5: a flash-időzítő 30 ms-onként a SZÖVEG viewportot is
+  érvénytelenítette — mérve: 32 teljes viewport-festés egy ~0,9s-es
+  flash alatt, miközben az overlay-t CSAK a gutter festi.
+- F / D-R6: a blokkcsíkok hardcode-olt #252840/#222538 színek — 5 téma,
+  élő apply_theme, futásidejű téma váltás (View menü + Beállítások) → a
+  VILÁGOS témára sötét csíkok.
+- G / D-R8: modern_control_panel.py futásidejűen halott, DE a saját
+  docstringje dokumentált drop-in alternatíva ("single import edit") +
+  __main__ demo → NEM törölve (fenntartott útvonal).
+- H / §5.2: transzparencia-stack / GL szöveg-renderelés — a
+  FONT_RENDERING_METRICS_AUDIT.md alapján forrásból igazolt,
+  platform/DPI-függő, offscreen nem reprodukálható architektúrás kérdés;
+  minden javítási irány renderelés-architektúra döntés → MEGÁLLT,
+  dokumentálva későbbi fázisra.
+
+IMPLEMENTÁCIÓ (hat lokális javítás, új gépezet NINCS):
+1) engine/engine.py: az ÁRNYÉKOLT első app_root property törölve; a P3.43
+   docstring a hatályos definícióhoz költözött (konstrukció szerint
+   viselkedés-változás nélkül).
+2) narration_editor.py paintEvent: a halott text/ln_width lokálisok törölve.
+3) _block_rows + gutter mousePressEvent + _highlight_current_line: a
+   dokumentum-hossz élő characterCount()-1 (O(1), mért identitás, NEM
+   cache); a P3.44.9.1-geometria algoritmusa érintetlen.
+4) _on_block_click_requested: a vizuális újra-render csak valódi
+   kiválasztás-változásnál (a properties-panel frissítés minden kattintásra
+   megmarad — a dokumentált látható visszajelzés).
+5) flash_blocks/_on_flash_tick: a viewport-érvénytelenítés törölve (a
+   gutter-é megmarad); az IDŐZÍTŐ MEGMARAD — a látható gutter-flash-t
+   vezérli és magától leáll.
+6) _highlight_current_line csíkok → Palette.BG_SURFACE/BG_SURFACE_ALT
+   (ugyanazok az alfák/szemantika) + NarrationEditor.refresh_theme() a
+   toolbar/top_nav konvenció szerint, bekötve a MainWindow mindkét
+   téma-váltási pontjára.
+7) batch_generation.py: _check_key = ("slot", slot_id) | ("job", id(job));
+   a pipák a JOB-jal utaznak; _checked_indices mindig tartományban; Load
+   Queue törli + újralevezeti az alapértékeket; _on_edit átviszi a manuál
+   job állapotát a klónra; _rebuild_table metszi az elérhetetlen kulcsokat;
+   a három docstring most a valóságot írja.
+
+MÉRÉSEK (műszerezve, valódi widgetek — előtte/utána):
+- no-op kattintás: 1 teljes viewport-festés → 0.
+- valódi kiválasztás-változás: 1 viewport + 1 gutter (változatlan szerződés).
+- egy flash: 32 teljes viewport-festés → 0 tickenként (a gutter ~30 festése
+  megmarad = a látható flash).
+- gutter-festésenként: 1 teljes dokumentum-másolat + 1 halott hívás → semmi.
+- csík a világos témában: #252840/#222538 → a téma felszín-tokenjei,
+  azonnal a váltás után.
+
+TESZTEK: tests/test_p3_45_4_rendering_ux_hardening.py — 28 fókuszált teszt
+(app_root AST+viselkedés; pipa-életciklus a VALÓDI handler-eken through:
+helyes job / átrendezés×2 / törlés / duplikátum / Load Queue×2 / friss
+ablak / hibás job / manuál-szerkesztés-átvitel / All-None / dict-higiénia /
+manuál-mód; festési útvonalak: AST nincs toPlainText a festésben,
+geometria-identitás + sor-invariánsok, VALÓDI görgetés gutter+viewport
+festése (P3.44.9.1 wiring), P3.45.1 jelvény; kattintás-festés: no-op=0,
+valódi=1, VALÓDI QTest.mouseClick kiválaszt; flash: gutter ≥10 festés,
+viewport ≤2, időzítő leáll; téma: élő tokenek, AST nincs hardcoded QColor,
+téma-váltás újralevezeti a csíkokat, kiválasztás ACCENT@35 / override
+WARNING@22 változatlan; P3.45.3-biztonság: chipek a jobbal utaznak,
+manuál-ablak változatlan). 8 meglévő suite mechanikus, dokumentált
+frissítése (index→job kulcs: p3_28 ×10, p3_44_1 ×6, p3_44_2 ×1,
+p3_44_4 select_only, p3_44_5 ×3, p3_45_2a ×6, p3_45_3 ×1, playback ×1) —
+a tesztek SZÁNDÉKA változatlan.
+
+VALIDÁCIÓ: fókusz 28/28 KÉTSZER; P3.45.3 40; P3.45.2B 33; P3.45.2A 42;
+P3.45.1 20; P3.44.9 76+35 subteszt; P3.44.9.1 19; P3.28 65; P3.23 29;
+P3.31 17; P3.44.1/4/5/6 104; P3.44.7/8/2/playback 157;
+two-workflows/nb/outlier/ux-batch 116; mentés/betöltés család 159; TELJES
+akku 3 darabban: 1725 passed + 35 subteszt + a KÉT dokumentáltan előzőleg
+létező hiba (SS-3 P3.37 README; P3.44.4 stop-timing flake izoláltan zöld);
+verify_compile 153/153 PASS; verify_architecture PASS;
+verify_functional_integrity 80/80 PASS; verify_integration az előzőleg
+létező stop-szemantika-sértés (pristin-azonos); launch smoke 12/12 a valódi
+belépési útvonalon (ss/p3454_launch_smoke.py, nem commitált próba).
+
+HATÁRKAPU-ELLENŐRZÉS: nincs új renderelés-keretrendszer; nincs elrendezés-
+motor; nincs cache-réteg; nincs globális repaint-menedzser; nincs új téma-
+architektúra; nincs széles GUI-refaktor; a flash-IDŐZÍTŐ megmarad (látható
+effektet vezérel); nincs P3.44.9-változás; nincs P3.44.9.1-GEOMETRIA-
+változás (csak a clamp-hossz forrása lett a mért-egyenlő élő identitás);
+nincs P3.45.1-szemantikai változás; nincs P3.45.2A-változás; nincs
+P3.45.2B-becsülő-változás; nincs P3.45.3-identitás-változás; nincs Batch-
+architektúra-átírás; nincs Scene Combine-átírás; nincs Manual Concatenate-
+átírás; nincs modern_control_panel-törlés (dokumentált fenntartott
+alternatíva); a transzparencia/GL kérdés MEGÁLLT és dokumentálva maradt;
+nincs identitás-újratervezés; nincs strukturális modell-változás; nincs
+kapcsolatlan refaktor. A P3.45.5 NEM kezdődött el.
+
+DOKUMENTÁCIÓ: docs/design/P3_45_4_RENDERING_UX_HARDENING.md (8 szakasz);
+OPEN_BUGS.md P3.45.4 szakasz (CLOSED + vizsgált-de-változatlan + reziduumok;
+SEMMI bejegyzés nem lett törölve). A P3.45.4 ITT ÁLL MEG.

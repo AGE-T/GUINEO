@@ -485,11 +485,11 @@ class Engine:
     # all selectors / lists / dependent UI refresh from the authoritative
     # state (P3.43 §5/§6). Read-only operations (export, validate, resolve)
     # emit nothing.
-
-    @property
-    def app_root(self) -> str:
-        """The application root directory (P3.43: public read-only)."""
-        return self._app_root
+    # P3.45.4 (D-R1): the app_root property that used to be duplicated here
+    # was the SHADOWED first definition (class-body order — the Properties
+    # section at the end of the class won). The single authoritative
+    # definition now lives with the other properties; its docstring moved
+    # with it.
 
     def list_voices(self) -> List[VoiceProfile]:
         return self._voices.list_profiles()
@@ -783,6 +783,7 @@ class Engine:
     # ------------------------------------------------------------------
     @property
     def app_root(self) -> str:
+        """The application root directory (P3.43: public read-only)."""
         return self._app_root
 
     @property

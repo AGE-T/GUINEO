@@ -709,7 +709,9 @@ class TestBatchSelectiveStart(_P345AHarness):
         dlg = self.queue_scene_batch(
             ["Safe one.", "huge " * 700, "Safe three."])
         bm = self.win._batch_manager
-        dlg._check_states = {0: True, 1: True, 2: True}
+        # P3.45.4 (documented update): job-keyed check states.
+        dlg._check_states = {dlg._check_key(j): True
+                             for j in bm.jobs}
         before = self.snapshot()
         rec = ModalRecorder(QMessageBox.StandardButton.No)
         with patch.object(QMessageBox, "question", rec):
@@ -731,7 +733,9 @@ class TestBatchSelectiveStart(_P345AHarness):
         dlg = self.queue_scene_batch(
             ["Safe one.", "huge " * 700, "Safe three."])
         bm = self.win._batch_manager
-        dlg._check_states = {0: True, 1: True, 2: True}
+        # P3.45.4 (documented update): job-keyed check states.
+        dlg._check_states = {dlg._check_key(j): True
+                             for j in bm.jobs}
         rec = ModalRecorder(QMessageBox.StandardButton.Yes)
         with patch.object(QMessageBox, "question", rec):
             self.win._on_generate_selected([0, 1, 2])
@@ -747,7 +751,9 @@ class TestBatchSelectiveStart(_P345AHarness):
         from unittest.mock import patch
         dlg = self.queue_scene_batch(["A short.", "B short.", "C short."])
         bm = self.win._batch_manager
-        dlg._check_states = {0: True, 1: True, 2: True}
+        # P3.45.4 (documented update): job-keyed check states.
+        dlg._check_states = {dlg._check_key(j): True
+                             for j in bm.jobs}
         rec = ModalRecorder(QMessageBox.StandardButton.No)
         with patch.object(QMessageBox, "question", rec):
             self.win._on_generate_selected([0, 1, 2])
@@ -763,7 +769,9 @@ class TestBatchSelectiveStart(_P345AHarness):
         bm = self.win._batch_manager
         # Only SAFE jobs are selected: the blocked one is not part of the
         # execution run — no confirmation, no delay, normal run.
-        dlg._check_states = {0: True, 1: False, 2: True}
+        # P3.45.4 (documented update): job-keyed check states.
+        dlg._check_states = {dlg._check_key(j): v for j, v in zip(
+            bm.jobs, [True, False, True])}
         rec = ModalRecorder(QMessageBox.StandardButton.No)
         with patch.object(QMessageBox, "question", rec):
             self.win._on_generate_selected([0, 2])
@@ -876,7 +884,9 @@ class TestRegenerationPreflight(_P345AHarness):
         # regenerates a COMPLETED part — regen_job refuses PENDING rows,
         # which would raise the un-patched "cannot be regenerated"
         # warning modal and hang the offscreen run).
-        dlg._check_states = {0: False, 1: True}
+        # P3.45.4 (documented update): job-keyed check states.
+        dlg._check_states = {dlg._check_key(j): v for j, v in zip(
+            bm.jobs, [False, True])}
         rec_run = ModalRecorder(QMessageBox.StandardButton.Yes)
         with patch.object(QMessageBox, "question", rec_run):
             self.win._on_generate_selected([1])
@@ -938,7 +948,9 @@ class TestNoMutationAndTruncationSemantics(_P345AHarness):
         dlg = self.queue_scene_batch(
             ["First block of narration.", "huge " * 700])
         bm = self.win._batch_manager
-        dlg._check_states = {0: True, 1: True}
+        # P3.45.4 (documented update): job-keyed check states.
+        dlg._check_states = {dlg._check_key(j): True
+                             for j in bm.jobs}
         before = self.snapshot()
         rec = ModalRecorder(QMessageBox.StandardButton.No)
         with patch.object(QMessageBox, "question", rec):

@@ -905,7 +905,9 @@ class TestRealGenerationIdentity(_MWHarness):
         self.start_long(self.PARTS(), review=True)
         dlg = self.dialog()
         bm = self.win._batch_manager
-        dlg._check_states = {0: True, 1: False, 2: False}
+        # P3.45.4 (documented update): job-keyed check states.
+        dlg._check_states = {dlg._check_key(j): v for j, v in zip(
+            bm.jobs, [True, False, False])}
         self.win._on_generate_selected([0])
         self.wait_batch()
         self.assertEqual(bm.jobs[0].status, JobStatus.COMPLETED)

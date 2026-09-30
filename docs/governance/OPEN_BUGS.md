@@ -2733,3 +2733,77 @@ inventing reconciliation logic):
   `verify_integration` stop semantics, pristine-identical).
 
 No backlog items were removed in this round.
+
+## P3.45.4 round — rendering / UX hardening
+
+### P3.45.4 — Six rendering/UX defects proven at runtime and fixed (CLOSED)
+
+The P3.45.4 code-level audit (at `87b56f4`, runtime probe with real Qt
+widgets — `ss/audit_p3454/probe.py`, 10/10 findings proven) confirmed and
+fixed, with instrumented before/after measurements
+(`ss/audit_p3454/probe_postfix.py`, 14/14):
+
+1. **Duplicated `engine.app_root` property** (D-R1) — the shadowed first
+   definition removed; the single authoritative property keeps the P3.43
+   behaviour (zero-change by construction).
+2. **`_check_states` index keying** (D-R2) — the user's transient
+   checkbox choices now travel with the JOB (slot id for structural
+   jobs, object identity for manual rows) instead of the row position;
+   reorder/delete/duplicate no longer migrate checkmarks to the wrong
+   job, `_checked_indices()` is always in range, and Load Queue
+   re-derives the documented P3.28 §11 defaults instead of keeping
+   stale cross-queue mappings. The three pre-fix docstrings that
+   CLAIMED slot-keying now describe the real implementation.
+3. **Redundant `toPlainText()` in paint paths** (D-R3) — the gutter
+   paintEvent's dead full-document copy (and dead `ln_width`) removed;
+   the length-only sites use the live O(1) identity
+   `characterCount()-1` (measured equal on empty/unicode/multi-block
+   documents). Not a cache — live document state, cannot go stale.
+4. **No-op click full viewport repaint** (D-R4) — the visual re-render
+   is conditional on the selection actually changing (properties-panel
+   refresh per click kept — the documented visible feedback). Measured:
+   1 full viewport paint → 0.
+5. **Flash-timer viewport repaints** (D-R5) — the flash overlay is
+   painted only by the block gutter; the per-tick text-viewport
+   invalidation is gone (measured 32 → 0 full viewport paints per
+   flash). THE TIMER STAYS: it drives the visible gutter flash and
+   self-stops.
+6. **Hardcoded block stripes** (D-R6) — the alternating block
+   backgrounds now use the theme's `BG_SURFACE`/`BG_SURFACE_ALT` tokens
+   (same alphas/semantics) and a new `NarrationEditor.refresh_theme()`
+   (the existing toolbar/top_nav convention) re-derives them at both
+   theme-switch sites, so the LIGHT theme no longer gets dark stripes.
+
+### Investigated and deliberately NOT changed (P3.45.4)
+
+- **`ui/panels/modern_control_panel.py` (D-R8)** — dead at runtime
+  (zero importers, zero test references) but its own docstring
+  documents it as the drop-in alternative ControlPanel ("MainWindow
+  can switch between the two implementations with a single import
+  edit") and it carries a `__main__` demo: a documented reserved route,
+  not a deletion candidate. Deletion would need its own decision.
+- **Transparency-stack / GL-composited text softening (§5.2 of the
+  P3.45 triage)** — per `docs/design/FONT_RENDERING_METRICS_AUDIT.md`
+  this is a source-verified architecture concern (QOpenGLWidget FBO
+  composition + `WA_TranslucentBackground` tree + PassThrough
+  fractional DPI), platform/DPI dependent, not reproducible in the
+  offscreen environment, no glyph corruption. Every fix direction is a
+  rendering-architecture decision → remains an ARCHITECTURAL FOLLOW-UP
+  (see the audit's "fix directions when implementation is approved");
+  NOT implemented in P3.45.4.
+- **D-R7 (combined-rows churn), D-R9 (Generate-button mid-batch
+  flicker), D-R10 (private-attribute reach-ins)** — documented in the
+  P3.45 triage §5.1 but outside the P3.45.4 issue list; untouched.
+- The flash TIMER itself — it drives a user-visible effect; only the
+  provably-invisible viewport invalidation was removed.
+
+### Residuals (recorded; each needs its own decision before any change)
+
+- Two same-slot jobs in one hand-edited queue YAML would share one
+  check state under slot keying (unreachable through product flows:
+  Generate Long replaces the queue; duplicates strip slot provenance).
+- The pre-existing environment failures are unchanged from the
+  P3.45.3 round (SS-3; the P3.44.4 stop-timing flake, green isolated;
+  `verify_integration` stop semantics, pristine-identical).
+
+No backlog items were removed in this round.

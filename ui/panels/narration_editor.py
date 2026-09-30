@@ -132,13 +132,20 @@ class _BlockGutterWidget(QWidget):
             once the layout materialises).
         """
         editor = self._editor
-        text = editor.toPlainText()
+        # P3.45.4 (D-R3): the document LENGTH only — the previous
+        # ``editor.toPlainText()`` copied the WHOLE document on EVERY
+        # gutter paint just to clamp offsets. characterCount()-1 is the
+        # exact live identity ``len(toPlainText()) == characterCount()-1``
+        # (Qt counts each block's paragraph separator; toPlainText maps
+        # each to one '\n' — the trailing separator has no text). It is
+        # live document state, NOT a cache — it can never go stale.
+        doc_len = editor.document().characterCount() - 1
         rows: list = []
         prev_text_bottom = None   # TEXT end of the last non-degenerate block
         prev_row_bottom = None    # ROW bottom of the last painted row
         for block in editor._blocks:
-            start = max(0, min(block.start_offset, len(text)))
-            end = max(start, min(block.end_offset, len(text)))
+            start = max(0, min(block.start_offset, doc_len))
+            end = max(start, min(block.end_offset, doc_len))
             if start >= end:
                 rows.append(None)
                 continue
@@ -185,8 +192,12 @@ class _BlockGutterWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         gw = self.width()
         vh = self.height()
-        text = editor.toPlainText()
-        ln_width = editor.line_number_area_width()
+        # P3.45.4 (D-R3): the dead ``text = editor.toPlainText()`` and
+        # ``ln_width = editor.line_number_area_width()`` locals were
+        # removed — neither was ever consumed by the paint body (the
+        # per-paint full-document copy was pure waste; row geometry
+        # comes from _block_rows, which now reads the live document
+        # length in O(1)).
 
         # Background — semi-transparent so ambient shows through
         bg = QColor(Palette.BG_SURFACE)
@@ -449,7 +460,9 @@ class _BlockGutterWidget(QWidget):
             return
         editor = self._editor
         click_y = int(event.position().y())
-        text = editor.toPlainText()
+        # P3.45.4 (D-R3): length only (live identity, O(1)) — the previous
+        # per-click full-document ``toPlainText()`` copy is gone.
+        doc_len = editor.document().characterCount() - 1
         # P3.41: hit-test against the SAME row layout the painter uses —
         # a stacked row (blocks sharing a document line after the user
         # removed the separator) selects exactly the block whose row was
@@ -460,7 +473,7 @@ class _BlockGutterWidget(QWidget):
                 continue
             block, y_top, y_bot = row
             if y_top <= click_y <= y_bot:
-                start = max(0, min(block.start_offset, len(text)))
+                start = max(0, min(block.start_offset, doc_len))
                 cursor = QTextCursor(editor.document())
                 cursor.setPosition(start)
                 editor.setTextCursor(cursor)
@@ -589,8 +602,11 @@ class BlockAwarePlainTextEdit(CodeEditor):
         self._flash_ids = set(block_ids) if block_ids else set()
         self._flash_alpha = 1.0
         self._flash_timer.start()
+        # P3.45.4 (D-R5): the flash overlay is painted ONLY by the block
+        # gutter (see _BlockGutterWidget.paintEvent) — the text viewport
+        # renders none of the flash state, so invalidating it here was a
+        # full text repaint per flash with zero visual effect.
         self._block_gutter_widget.update()
-        self.viewport().update()
 
     def update_block_status(self, block_id: str, status: str,
                             progress: float = 0.0,
@@ -677,8 +693,14 @@ class BlockAwarePlainTextEdit(CodeEditor):
         if self._flash_alpha <= 0:
             self._flash_ids.clear()
             self._flash_timer.stop()
+        # P3.45.4 (D-R5): repaint the GUTTER only — it is the sole painter
+        # of the flash overlay. The previous ``self.viewport().update()``
+        # scheduled a full text-viewport repaint every 30 ms for the whole
+        # ~0.9 s animation (measured: 32 full viewport paints per flash)
+        # although the viewport's rendering never reads _flash_ids or
+        # _flash_alpha. The timer itself stays: it drives the visible
+        # gutter flash (fade-out) and stops itself when the fade completes.
         self._block_gutter_widget.update()
-        self.viewport().update()
 
     # ------------------------------------------------------------------
     # Override CodeEditor._highlight_current_line to MERGE block selections
@@ -706,18 +728,27 @@ class BlockAwarePlainTextEdit(CodeEditor):
 
         # 2. Block background selections (if blocks are visible)
         if self._blocks and self._show_blocks:
-            text = self.toPlainText()
-            color_a = QColor("#252840")
+            # P3.45.4 (D-R3): length only (live O(1) identity) — the
+            # previous per-cursor-move full-document ``toPlainText()``
+            # copy is gone.
+            doc_len = self.document().characterCount() - 1
+            # P3.45.4 (D-R6): alternating block stripes now use the
+            # THEME's surface tokens (Palette is live-updated by
+            # apply_theme, like every other surface in this editor) —
+            # the previously hardcoded dark-only "#252840"/"#222538"
+            # painted dark stripes over the LIGHT theme's background.
+            # Same alternation semantics, same alpha levels.
+            color_a = QColor(Palette.BG_SURFACE)
             color_a.setAlpha(45)
-            color_b = QColor("#222538")
+            color_b = QColor(Palette.BG_SURFACE_ALT)
             color_b.setAlpha(45)
             color_selected = QColor(Palette.ACCENT)
             color_selected.setAlpha(35)
             color_override = QColor(Palette.WARNING)
             color_override.setAlpha(22)
             for i, block in enumerate(self._blocks):
-                start = max(0, min(block.start_offset, len(text)))
-                end = max(start, min(block.end_offset, len(text)))
+                start = max(0, min(block.start_offset, doc_len))
+                end = max(start, min(block.end_offset, doc_len))
                 if start >= end:
                     continue
                 sel = QTextEdit.ExtraSelection()
@@ -1397,6 +1428,20 @@ class NarrationEditor(QWidget):
             self._editor.set_block_data([], None, {})
             self._editor.setExtraSelections([])
 
+    def refresh_theme(self) -> None:
+        """P3.45.4 (D-R6): re-derive every Palette-derived editor visual
+        after a theme switch.
+
+        The block gutter repaints with live Palette reads, but the block
+        STRIPES are QTextEdit extra-selection formats computed at
+        ``_highlight_current_line`` time — without this refresh they keep
+        the PREVIOUS theme's colors until the next cursor move. Follows
+        the existing toolbar/top_nav ``refresh_theme()`` convention; called
+        from MainWindow's two theme-application sites (View → Theme menu
+        and the Settings dialog save path).
+        """
+        self._render_block_visuals()
+
     def _update_properties_panel(self) -> None:
         if not self._selected_block_id:
             self._block_title.setText("No block selected")
@@ -1829,6 +1874,16 @@ class NarrationEditor(QWidget):
 
         Idempotent: re-clicking the already-selected block refreshes the
         properties panel so every click produces visible feedback.
+        P3.45.4 (D-R4): the VISUAL re-render is now conditional on the
+        selection actually changing. A re-click on the same block
+        re-applies identical state (same block list object, same
+        selected id, same global defaults — every model mutation and
+        every global-default change re-renders through its own path:
+        set_text / set_global_defaults / _set_mode / each block-manager
+        mutation call _render_block_visuals themselves), so the previous
+        unconditional call scheduled a full text-viewport repaint for a
+        click that changed nothing on screen. The properties-panel
+        refresh (the documented visible feedback) is unchanged.
         """
         if self._mode != self.MODE_BLOCKS or self._raw_mode:
             return
@@ -1838,8 +1893,8 @@ class NarrationEditor(QWidget):
         changed = block.id != self._selected_block_id
         self._selected_block_id = block.id
         self._update_properties_panel()
-        self._render_block_visuals()
         if changed:
+            self._render_block_visuals()
             self.block_selected.emit(block.id)
 
     def _on_split(self) -> None:
