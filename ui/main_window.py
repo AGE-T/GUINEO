@@ -644,6 +644,11 @@ class MainWindow(QMainWindow):
 
         # Restore the persisted project name (from settings.json) so it
         # survives application restarts.
+        # P3.45.6 Phase 3: default = NOT a first run (attempt the
+        # restoration; it fails honestly on its own when no valid saved
+        # selection exists). Overwritten below with the REAL pre-flag
+        # value read inside the try.
+        startup_is_first_run = False
         try:
             settings_dir = os.path.join(APP_ROOT, "settings")
             from engine.settings_manager import SettingsManager
@@ -677,6 +682,11 @@ class MainWindow(QMainWindow):
             # This ONLY happens once — the first_run_completed flag is set
             # to True and persisted, so subsequent startups never reinsert.
             first_run = _sm.get("application", "first_run_completed", False)
+            # P3.45.6 Phase 3: remember whether THIS startup is a genuine
+            # first run (the flag below is set to True before the startup
+            # restoration runs — the restoration must not fire for a
+            # fresh install whose merged "Default" was never chosen).
+            startup_is_first_run = not first_run
             if not first_run:
                 current_text = self._editor.get_text().strip()
                 if not current_text and not self._editor.is_raw_mode():
@@ -728,7 +738,7 @@ class MainWindow(QMainWindow):
         # was never loaded and the sidebar lists stayed empty until the
         # user clicked Projects/Scenes.
         restored = False
-        if self._project_manager is not None:
+        if self._project_manager is not None and not startup_is_first_run:
             try:
                 restored = self._restore_last_active_project()
             except Exception as exc:
@@ -6426,6 +6436,15 @@ class MainWindow(QMainWindow):
         saved_scene_name = ""
         try:
             _sm = self._settings_manager
+            # P3.45.6: a persisted selection is only meaningful AFTER the
+            # first run has completed — before that, the merged schema
+            # default ("Default") was never chosen by anyone, and a
+            # genuinely fresh install keeps the ORIGINAL first-run
+            # experience exactly as before (demo insertion + in-memory
+            # default project). This also keeps the first-run immune to
+            # the state of any shipped/Default project on disk.
+            if not _sm.get("application", "first_run_completed", False):
+                return False
             saved_name = _sm.get("application", "current_project", "") or ""
             saved_scene_name = _sm.get("application", "current_scene", "") or ""
         except Exception:

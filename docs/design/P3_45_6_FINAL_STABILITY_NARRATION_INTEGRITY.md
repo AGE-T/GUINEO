@@ -498,3 +498,25 @@ round trip preserves parity.
 - `get_final_prompt` / `Engine.preview_prompt` remain dead code with
   a documented divergence (no raw check) — zero callers, zero runtime
   risk; retirement is separate hygiene.
+
+### 3.7 Refinement (found during the final validation battery)
+
+The first full-battery run surfaced an interaction: the repo SHIPS a
+tracked `projects/e2315687-5f0` "Default" project (its scene holds the
+first-run demo text), and MainWindow-driving tests MUTATE that tracked
+file during the battery (+110 lines; a PRE-EXISTING test-hygiene
+defect, recorded in OPEN_BUGS). With the restoration firing on the
+merged schema default ("Default" — never actually chosen), the mutated
+shipped project loaded at startup and replaced the demo text — the
+P3.37 first-run demo test failed mid-battery.
+
+REFINEMENT: the restoration now fires only when the persisted selection
+is meaningful — `first_run_completed` was already True at startup (the
+pre-flag value, captured before the first-run block sets it). A
+genuinely fresh install keeps the ORIGINAL first-run experience exactly
+(demo insertion + in-memory default project, no restoration — immune
+to the shipped project's on-disk state), while every subsequent launch
+restores the persisted selection as specified. Battery chunk 2 re-run
+fully green (639) with the tracked file mutated mid-run; Phase 3 suite
+extended with the shipped-project first-run + second-run contracts
+(12/12 twice).

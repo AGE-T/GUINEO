@@ -3079,3 +3079,25 @@ dialog. Both key regressions PROVEN red pre-fix / green post-fix
 documented in the design record §5.3. Residuals recorded: split-time
 warnings not shown in the parts list; dead `get_final_prompt` /
 `Engine.preview_prompt` (zero callers) left for separate hygiene.
+
+### P3.45.6 finding (NEW, pre-existing defect made visible) — tracked shipped project mutated by test runs
+
+- **Status**: OPEN (test hygiene; outside the P3.45.6 five-phase scope)
+- **Defect**: the repo ships a tracked `projects/e2315687-5f0/project.json`
+  ("Default", scene "Untitled" holding the first-run demo text), and
+  MainWindow-driving tests MUTATE this tracked file during suite runs
+  (scene/project save flows over the repo ProjectManager; measured
+  +110/−17 lines after one battery chunk; also untracked residue
+  `projects/<uuid>/`, `settings/`, `logs/`, `presets/` appear).
+- **Why visible now**: the P3.45.6 Phase 3 startup restoration loads
+  the persisted "Default" selection — with the tracked file mutated by
+  earlier tests, the restored project carried test-written text and the
+  P3.37 first-run demo test failed mid-battery (passes from a clean
+  tree; reproduced only with mutated state).
+- **Fix direction (own task)**: MainWindow-driving tests must isolate
+  APP_ROOT (patch `ui.main_window.APP_ROOT` to a tmp dir, the
+  P3.45.6 Phase 3 harness pattern) so no tracked runtime file is ever
+  mutated; alternatively the shipped project should move out of the
+  Git tree into first-run provisioning. NOT changed in P3.45.6
+  (frozen-suite hygiene; the Phase 3 first-run gate already makes the
+  PRODUCT behavior immune).

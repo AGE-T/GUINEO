@@ -390,5 +390,74 @@ class TestStartupRestoration(_StartupHarness):
         self.assertTrue(any(r.entity_id == saved.id for r in recents))
 
 
+class TestShippedDefaultProjectRestore(_StartupHarness):
+    """The SHIPPED first-run layout: the repo carries a tracked
+    "Default" project whose scene holds the first-run demo text.
+
+    P3.45.6 Phase 3: a genuinely FRESH install (first run not yet
+    completed — the merged schema default "Default" was never chosen
+    by anyone) keeps the ORIGINAL first-run experience exactly: the
+    demo text arrives through the first-run insertion path, the
+    in-memory default project stays, and NO restoration fires. This
+    also keeps the first run immune to the state of the shipped
+    project file on disk (the battery-order hazard: suite runs mutate
+    the tracked projects/Default/project.json — a pre-existing
+    test-hygiene defect recorded in OPEN_BUGS)."""
+
+    def test_first_run_untouched_with_shipped_default_on_disk(self):
+        from engine.models import Scene as _Scene
+        demo = "Ez egy rövid GUINEO teszt. Ez a mintaszöveg..."
+        pm_dir = os.path.join(self.tmp, "projects")
+        project = Project(name="Default", id="dflt0001")
+        scene = _Scene(name="Untitled", project_id="dflt0001", text=demo)
+        project.add_scene(scene)
+        ProjectManager(pm_dir).save_project(project)
+        # NO settings file at all — a genuinely fresh install (the
+        # Engine init creates defaults with first_run_completed=False).
+
+        self._construct()
+        win = self.win
+
+        # NO restoration: the in-memory default project (a NEW uuid),
+        # not the shipped one.
+        self.assertIsNotNone(win._active_project)
+        self.assertNotEqual(win._active_project.id, "dflt0001")
+        # The first-run demo text is present through the ORIGINAL
+        # insertion path.
+        self.assertIn("GUINEO teszt", win._editor.get_text())
+        # The left-panel Projects list renders the REAL on-disk state
+        # (the shipped Default project is listed — clickable), while NO
+        # listed row is marked active (the phantom default is not an
+        # on-disk project, so the highlight matches nothing visible).
+        ids = [e.get("id") for e in win._sidebar._context_entries]
+        self.assertIn("dflt0001", ids)
+        self.assertNotIn(win._sidebar._context_active_id, ids)
+
+    def test_second_run_restores_shipped_default(self):
+        """After the first run completed with the (unchanged) persisted
+        "Default" selection, the shipped Default project restores —
+        populated lists, breadcrumb == actual objects."""
+        from engine.models import Scene as _Scene
+        demo = "Ez egy rövid GUINEO teszt. Ez a mintaszöveg..."
+        pm_dir = os.path.join(self.tmp, "projects")
+        project = Project(name="Default", id="dflt0001")
+        scene = _Scene(name="Untitled", project_id="dflt0001", text=demo)
+        project.add_scene(scene)
+        ProjectManager(pm_dir).save_project(project)
+        _write_settings(self.tmp, {
+            "current_project": "Default",
+            "current_scene": "Untitled",
+            "first_run_completed": True,
+        })
+
+        self._construct()
+        win = self.win
+
+        self.assertEqual(win._active_project.id, "dflt0001")
+        self.assertEqual(win._active_scene.name, "Untitled")
+        self.assertEqual(win._editor.get_text(), demo)
+        self.assertEqual(win._sidebar._context_entries[0]["id"], "dflt0001")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
