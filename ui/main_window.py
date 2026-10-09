@@ -1039,6 +1039,10 @@ class MainWindow(QMainWindow):
             speed=self._speed,
             pitch=self._pitch,
             delivery=self._delivery,
+            # P3.45.6 Phase 5: the Allow SFX policy rides the same push
+            # so the center Preview compiles with the policy Generate
+            # will use (parity with _build_prompt).
+            allow_sfx=self._control_panel.get_parameters().allow_sfx,
         )
 
         # Build the unified prompt (Stage 1 verification logs SHA-256).

@@ -410,3 +410,91 @@ minimum-height rows) re-asserted on the real gutter.
 - The harness lesson (restoring an unwrapped staticmethod turns it
   into a bound method → mid-paint exception → active painter →
   segfault) is recorded in the test file for future harness authors.
+
+---
+
+## Phase 5 — Preview / Narration Block Token Consistency
+
+### 5.1 Investigation result (source-verified at HEAD)
+
+Two preview surfaces exist: the RIGHT-panel "Final Prompt" (built by
+the SAME `_build_prompt()` as Generate — parity by construction) and
+the CENTER Preview tab. The center tab compiled through a PARALLEL
+pipeline (`PromptOptimizer.resolve_and_optimize` +
+`PromptBuilder.build_from_emissions` / `build`) with three proven
+divergences: it NEVER applied `allow_sfx` (SFX tokens showed in the
+preview while Generate suppressed them — preview != model input);
+it surfaced NO compile warnings (SS-H07 broken on a display surface);
+and it silently fell back to the raw text on compile failure. The
+Long-Narration dialog's part rebuild also swallowed compile warnings.
+Global-defaults double application was audited and NOT found on any
+path (resolution chains verified: optimizer-once → prefix;
+compile()'s or-chain; splitter-resolved effective values forwarded as
+globals with block_* None; dialog eff_* → globals). Dead divergent
+code (`NarrationEditor.get_final_prompt` — no raw check — and
+`Engine.preview_prompt`, both zero-caller) was left in place,
+documented (removal is separate hygiene; no runtime risk).
+
+### 5.2 Fix (ONE token engine)
+
+- `NarrationEditor._update_preview` now compiles through the SAME
+  `CanonicalPromptCompiler` entries as `_build_prompt()`
+  (`compile_continuous` with blocks; `compile_for_generate` without)
+  with the SAME `allow_sfx` policy; Raw Mode remains literal
+  pass-through (unchanged); compile warnings are surfaced in the
+  preview stats line (`⚠ N warning(s)` + logged); a compile failure
+  shows the plain text WITH a visible warning (display surface —
+  Generate still blocks; that contract is unchanged).
+- `set_global_defaults(..., allow_sfx=True)` carries the Allow SFX
+  policy on the existing global-defaults push (the issue-#37 hook);
+  `MainWindow._update_prompt_preview` forwards
+  `params.allow_sfx`.
+- The Long-Narration dialog collects per-part rebuild warnings and
+  surfaces them ONCE (generation continues with the tokenless parts
+  the user was told about; the unexpected-exception fallback is
+  recorded as a warning instead of being fully silent).
+
+### 5.3 Intended, DOCUMENTED differences (not defects)
+
+- Independent Batch Parts are compiled SELF-CONTAINED (each part
+  re-emits its winning tokens; part text = the block slice
+  `.strip()`-ed at split time) while the continuous single-call
+  prompt keeps unstripped slices joined with a single space and emits
+  tokens on CHANGE across blocks.
+- Character/speaker state affects VOICE selection and part identity —
+  never prompt control tokens.
+- No hybrid "detect `<|` in text" shortcut exists (ADR 003): literal
+  tokens require Raw Mode.
+
+### 5.4 Regression tests (`tests/test_p3_45_6_preview_token_consistency.py`)
+
+15 tests, run TWICE green; both key tests PROVEN to fail on the
+pre-fix tree (stash-verified): blocks-mode parity with Allow SFX OFF
+(THE regression — preview previously showed SFX tokens Generate
+suppressed); dialog warning surfacing. Coverage: parity with SFX
+ON/OFF; no-blocks parity; raw literal pass-through on both surfaces;
+warnings surfaced in preview stats; global defaults emitted exactly
+once; block override precedence with single winning tokens;
+deterministic emission order (emotion → style → speed → pitch →
+delivery, tags verified against higgs_tokens); pause/SFX parity;
+parts from exact source slices; self-contained part tokens (the
+documented intended difference); invalid ranges never become
+duplicate parts (gate re-assertion); speaker consistency; save/load
+round trip preserves parity.
+
+### 5.5 Results
+
+- Focused 15/15 twice; all five P3.45.6 suites together 76/76.
+- Token/preview historical suites: P3.25 + P3.44.2 + P3.39 +
+  P3.45.2A + P3.45.2B = 182 passed.
+- `verify_compile` 159/159.
+
+### 5.6 Residual risks
+
+- Split-time compile warnings (in `NarrationSplitter`) are still not
+  surfaced in the parts list (the dialog surfaces the REBUILD
+  warnings; split-time effective values come from validated panel
+  options, so the realistic warning source is the dialog edit).
+- `get_final_prompt` / `Engine.preview_prompt` remain dead code with
+  a documented divergence (no raw check) — zero callers, zero runtime
+  risk; retirement is separate hygiene.

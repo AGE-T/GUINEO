@@ -972,6 +972,13 @@ class NarrationEditor(QWidget):
         self._global_speed: str = "Normal"
         self._global_pitch: str = "Normal"
         self._global_delivery: str = "Normal"
+        # P3.45.6 Phase 5: the Allow SFX policy for the center Preview
+        # (pushed with the global defaults from MainWindow; True until
+        # the first push — the panel default).
+        self._allow_sfx: bool = True
+        # P3.45.6 Phase 5: compile warnings from the last preview build
+        # (surfaced in the stats line — never silently swallowed).
+        self._last_preview_warnings: list = []
         self._selected_block_id: Optional[str] = None
         self._show_blocks: bool = True
         # Raw-mode state: when True, the editor shows raw Higgs tokens
@@ -2302,28 +2309,56 @@ class NarrationEditor(QWidget):
         # Raw Mode is active (ADR 003 §6/§8: preview == model input).
         if self._raw_mode:
             final_prompt = text
+            self._last_preview_warnings = []
         else:
+            # P3.45.6 Phase 5 — THE CANONICAL COMPILER builds the center
+            # Preview too. The previous parallel pipeline
+            # (PromptOptimizer.resolve_and_optimize +
+            # PromptBuilder.build_from_emissions / build) was
+            # code-divergent from MainWindow._build_prompt(): it never
+            # applied ``allow_sfx`` (SFX tokens showed in the preview
+            # even when Allow SFX was OFF), surfaced no compile
+            # warnings, and silently fell back to the raw text on
+            # failure. The Preview now compiles through the SAME
+            # CanonicalPromptCompiler entries as Generate
+            # (compile_continuous with blocks; compile_for_generate
+            # without) with the SAME allow_sfx policy — ONE token
+            # engine, one precedence rule (Inline > Block > Global).
+            from engine.prompt_state import CanonicalPromptCompiler
             blocks = self._block_manager.blocks
-            if blocks:
-                states = self._optimizer.resolve_and_optimize(
-                    blocks, text,
-                    global_emotion=self._global_emotion,
-                    global_style=self._global_style,
-                    global_speed=self._global_speed,
-                    global_pitch=self._global_pitch,
-                    global_delivery=self._global_delivery,
-                )
-                emissions = self._optimizer.optimize_emissions(states)
-                final_prompt = self._builder.build_from_emissions(states, emissions)
-            else:
-                try:
-                    prompt_data = self._builder.build(
-                        text, emotion=self._global_emotion, style=self._global_style,
-                        speed=self._global_speed, pitch=self._global_pitch,
-                        delivery=self._global_delivery)
-                    final_prompt = prompt_data.final_prompt
-                except Exception:
-                    final_prompt = text
+            warnings = []
+            try:
+                if blocks:
+                    prompt_data = CanonicalPromptCompiler.compile_continuous(
+                        text=text, blocks=blocks,
+                        global_emotion=self._global_emotion,
+                        global_style=self._global_style,
+                        global_speed=self._global_speed,
+                        global_pitch=self._global_pitch,
+                        global_delivery=self._global_delivery,
+                        token_state=None,
+                        allow_sfx=self._allow_sfx)
+                else:
+                    prompt_data = CanonicalPromptCompiler.compile_for_generate(
+                        text=text,
+                        global_emotion=self._global_emotion,
+                        global_style=self._global_style,
+                        global_speed=self._global_speed,
+                        global_pitch=self._global_pitch,
+                        global_delivery=self._global_delivery,
+                        token_state=None,
+                        allow_sfx=self._allow_sfx)
+                final_prompt = prompt_data.final_prompt
+                warnings = list(prompt_data.warnings)
+            except Exception as exc:
+                # Display-only surface: a compile failure shows the
+                # failure state EXPLICITLY (the plain text + a visible
+                # warning) — never a silent tokenless degradation
+                # (Generate blocks on failure instead; that contract
+                # is unchanged).
+                final_prompt = text
+                warnings = ["Prompt compilation failed: {0}".format(exc)]
+            self._last_preview_warnings = warnings
         self._preview.setPlainText(final_prompt)
         import re
         token_count = len(re.findall(r"<\|\w+:\w+\|>", final_prompt))
@@ -2344,10 +2379,19 @@ class NarrationEditor(QWidget):
         # stats measure the editor text as the user sees it.
         est_duration = estimate_speech_seconds(text)
         block_count = len(self._block_manager.blocks) if self._block_manager.blocks else 1
-        self._stats_label.setText(
-            "Prompt length: {0} chars  |  Tokens: {1}  |  Blocks: {2}  |  "
-            "Est. duration: ~{3:.0f}s".format(
-                prompt_len, token_count, block_count, est_duration))
+        stats = ("Prompt length: {0} chars  |  Tokens: {1}  |  Blocks: {2}  |  "
+                 "Est. duration: ~{3:.0f}s".format(
+                     prompt_len, token_count, block_count, est_duration))
+        # P3.45.6 Phase 5: compile warnings are VISIBLE in the preview
+        # stats (the canonical compiler's SS-H07 discipline — an
+        # invalid value or a compile failure is never silently
+        # swallowed on a display surface).
+        preview_warnings = getattr(self, "_last_preview_warnings", []) or []
+        if preview_warnings:
+            stats += "  |  \u26a0 {0} warning(s)".format(len(preview_warnings))
+            for w in preview_warnings[:3]:
+                logger.warning("Preview compile warning: %s", w)
+        self._stats_label.setText(stats)
 
     # Public API
     def get_text(self) -> str:
@@ -2384,12 +2428,18 @@ class NarrationEditor(QWidget):
         self._block_manager.clear()
 
     def set_global_defaults(self, emotion=None, style=None, speed="Normal",
-                            pitch="Normal", delivery="Normal") -> None:
+                            pitch="Normal", delivery="Normal",
+                            allow_sfx=True) -> None:
         self._global_emotion = emotion
         self._global_style = style
         self._global_speed = speed
         self._global_pitch = pitch
         self._global_delivery = delivery
+        # P3.45.6 Phase 5: the Allow SFX policy rides the SAME
+        # global-defaults push (the single reliable hook that catches
+        # every Friendly-control change — issue #37) so the center
+        # Preview compiles with the policy Generate will use.
+        self._allow_sfx = bool(allow_sfx)
         self._update_properties_panel()
         # CRITICAL (issue #37): when the user is in Preview mode and changes
         # a Friendly control (emotion/style/prosody), the Preview widget

@@ -3065,3 +3065,17 @@ unchanged; status ladder stops left of the pill; label elided to the
 remainder; P3.44.9.1 row geometry untouched). Evidence: 11 layout+
 real-render regressions (twice, clean exit), 142 frozen-contract tests
 re-validated — design record §4.
+
+### P3.45.6 Phase 5 — center-Preview token pipeline divergence: CLOSED
+
+The center Preview tab compiled through a parallel token pipeline
+that ignored `allow_sfx`, surfaced no warnings and silently fell back
+on failure; the Long dialog swallowed part-rebuild warnings. CLOSED by
+routing the preview through the SAME CanonicalPromptCompiler entries
+as `_build_prompt()` with the same allow_sfx policy (pushed with the
+global defaults), surfacing warnings on both the preview stats and the
+dialog. Both key regressions PROVEN red pre-fix / green post-fix
+(stash-verified). Intended continuous-vs-independent-part differences
+documented in the design record §5.3. Residuals recorded: split-time
+warnings not shown in the parts list; dead `get_final_prompt` /
+`Engine.preview_prompt` (zero callers) left for separate hygiene.

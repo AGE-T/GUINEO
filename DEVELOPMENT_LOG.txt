@@ -4697,3 +4697,52 @@ P3.45.4+P3.44.7+P3.45.6/2.fázis = 142 passed. Harris-óra: a
 nem-csomagolt staticmethod visszaállítása példány-metódussá teszi a
 függvényt (self+6 argumentum) → festés közbeni kivétel → aktív painter →
 exit-kori szegmentálási hiba — rögzítve a tesztfájlban.
+
+5. FÁZIS — ELŐNÉZET/NARRÁCIÓS BLOKK TOKEN-KONZISZTENCIA: KÉSZ (a 2.
+fázis UTÁN, ahogy előírva). Vizsgálat (forrás-szinten igazolva): KÉT
+előnézeti felület létezik — a jobb paneli „Final Prompt” ugyanazt a
+_build_prompt()-ot használja, mint a Generate (szerkezetileg azonos);
+a KÖZÉPSŐ Preview fül azonban EGY PÁRHUZAMOS token-fordítócsövön ment
+keresztül (PromptOptimizer + build_from_emissions/build), három
+bizonyított eltéréssel: SOHA nem alkalmazta az allow_sfx-et (az
+előnézet SFX tokeneket mutatott, miközben a Generate elnyomta őket —
+előnézet ≠ modellbemenet), NEMJELZETT fordítási figyelmeztetéseket
+(SS-H07 megtört egy megjelenítési felületen), és hangtalanul a nyers
+szövegre esett vissza fordítási hibánál; a Long-párbeszédpanel
+újrafordítása is elnyelte a figyelmeztetéseket. Globális
+alapértékek duplikált alkalmazása egyetlen útvonalon SEM található
+(felbontási láncok auditálva). A javítás (EGY token-motor): a középső
+előnézet UGYANAZOKON a CanonicalPromptCompiler belépési pontokon
+fordít, mint a _build_prompt() (compile_continuous blokkokkal;
+compile_for_generate anélkül), UGYANAZZAL az allow_sfx-szel (a
+set_global_defaults meglévő tolásán keresztül); a fordítási
+figyelmeztetések láthatóak az előnézet statisztikájában; hibánál a
+nyers szöveg + látható figyelmeztetés (megjelenítési felület — a
+Generate továbbra is blokkol); a párbeszédpanel összegyűjti és EGYSZER
+jelzi a rész-újrafordítási figyelmeztetéseket (a váratlan kivétel
+tartaléka figyelmeztetésként rögzítve, nem teljesen hangtalanul). A
+Raw mód változatlanul szó szerinti áteresztő. SZÁNDÉKOS, DOKUMENTÁLT
+különbségek: az egymástól független Batch Parts ÖNMEGTARTÓak
+(minden rész újrakibocsátja a nyertes tokenjeit; a részszöveg a blokk-
+szelet STRIP-elve), míg a folytonos prompt strip nélküli szeleteket
+egyetleszóközzel fűzi és VÁLTOZÁSKÉNT bocsátja ki a tokeneket; a
+karakter/beszélő állapot a HANG kiválasztást és a rész-identitást
+érinti, sosem a prompt vezérlő tokeneket; nincs hibrid <|detektálás
+(A„ADR 003). TESZT: tests/test_p3_45_6_preview_token_consistency.py —
+15 teszt KÉTSZER zöld; mindkét kulcsteszt a javítás ELŐTTI fán ELBUKIK
+(stash-igazolás): blokk-mód paritás Allow SFX KI állapotban (a
+regresszió) és a párbeszédpanel figyelmeztetés-jelzése. A paritás
+teljes (SFX be/ki, blokk nélkül, raw); alapértékek pontosan egyszer;
+blokk-felülírás precedenciája egyetlen nyertes tokenekkel;
+determinisztikus kibocsátási sorrend; pause/SFX paritás; részek
+pontos forrásszeletekből; ön-megtartó rész-tokenek (dokumentált
+szándék); érvénytelen tartományok sosem duplikált részek; beszélő-
+konzisztencia; save/load körút paritás-megőrzéssel. Token/előnézet
+történelmi suite-ok: P3.25+P3.44.2+P3.39+P3.45.2A+P3.45.2B = 182
+passed; mind az öt P3.45.6 suite együtt 76/76; verify_compile 159/159.
+Reziduumok (dokumentálva): a split-idejű fordítási figyelmeztetések a
+részlistában továbbra sem jelennek meg (a split-idejű effektív értékek
+validált panel-opciókból jönnek — a realisztikus
+figyelmeztetés-forrás a párbeszédpaneli szerkesztés); a
+get_final_prompt/Engine.preview_prompt holt kód (dokumentált
+eltéréssel, nulla hívó — nyugdíjaztatás külön higiénia).

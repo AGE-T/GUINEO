@@ -1,0 +1,51 @@
+{
+  "format": "speechstudio-project-v2",
+  "version": 2,
+  "id": "e2315687-5f0",
+  "name": "Default",
+  "description": "",
+  "characters": [],
+  "scenes": [
+    {
+      "id": "a345b1ea-595",
+      "name": "Untitled",
+      "project_id": "e2315687-5f0",
+      "text": "Ez egy rövid GUINEO teszt. Ezt a mintaszöveget azért használjuk, hogy az alkalmazás első indításakor azonnal kipróbálható legyen a hanggenerálás. Egy folyamatos generálás körülbelül harminc másodpercig ajánlott stabilan. Ha ennél hosszabb anyagot szeretnél készíteni, érdemes a szöveget Narration Blocks segítségével kisebb részekre bontani. Így minden rész külön generálható, ellenőrizhető és szükség esetén újra elkészíthető.",
+      "narration_blocks": [],
+      "character_ids": [],
+      "emotion": null,
+      "style": null,
+      "speed": "Normal",
+      "pitch": "Normal",
+      "delivery": "Normal",
+      "parameters": {
+        "temperature": 1.3,
+        "top_p": 0.95,
+        "top_k": 300,
+        "max_new_tokens": 4096,
+        "seed": null,
+        "append_silence": 0.5,
+        "normalize_output": false,
+        "auto_play": true,
+        "output_format": "wav",
+        "allow_sfx": true
+      },
+      "status": "not_generated",
+      "audio_assets": [],
+      "voice_profile_id": null,
+      "sort_order": 0,
+      "editor_mode": "plain",
+      "selected_block_id": null,
+      "expected_audio_slots": [],
+      "combined_outputs": [],
+      "selected_block_audio": {},
+      "selected_output": null,
+      "created_at": "",
+      "modified_at": ""
+    }
+  ],
+  "speaker_voice_map": {},
+  "combined_outputs": [],
+  "created_at": "2026-10-09T12:28:23",
+  "modified_at": "2026-10-09T12:28:23"
+}

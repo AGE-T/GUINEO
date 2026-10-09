@@ -697,6 +697,14 @@ class LongNarrationDialog(QDialog):
 
         from engine.prompt_state import CanonicalPromptCompiler
         parts = []
+        # P3.45.6 Phase 5: compile warnings from the part rebuild are
+        # COLLECTED and surfaced once (SS-H07 discipline — the canonical
+        # compiler converts invalid-value failures into a tokenless
+        # prompt WITH a warning; the warning must reach the user, never
+        # be silently swallowed). The outer ``except`` keeps the
+        # last-resort tokenless fallback for unexpected non-compile
+        # errors but records it as a warning too.
+        compile_warnings = []
         for i, editor in enumerate(self._editors):
             text = editor.toPlainText().strip()
             if text:
@@ -732,8 +740,18 @@ class LongNarrationDialog(QDialog):
                             allow_sfx=self._allow_sfx,
                         )
                         p.prompt = prompt_data.final_prompt
-                    except Exception:
+                        if prompt_data.warnings:
+                            for w in prompt_data.warnings:
+                                compile_warnings.append(
+                                    "Part {0}: {1}".format(i + 1, w))
+                    except Exception as exc:
+                        # Unexpected non-compile failure: tokenless
+                        # fallback RECORDED (no longer fully silent).
                         p.prompt = text
+                        compile_warnings.append(
+                            "Part {0}: prompt rebuild failed ({1}) — "
+                            "the plain text will be sent without control "
+                            "tokens.".format(i + 1, exc))
                 p.char_count = len(p.prompt)
                 # P3.45.2B — recompute the part's estimate from the
                 # EDITED text through the canonical estimator: this is
@@ -746,6 +764,16 @@ class LongNarrationDialog(QDialog):
 
         if not parts:
             return
+
+        # P3.45.6 Phase 5: surface the collected warnings ONCE.
+        if compile_warnings:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "Prompt Warnings",
+                "Some parts were compiled with warnings:\n\n{0}\n\n"
+                "Generation will continue; the affected parts were "
+                "compiled without the rejected control tokens.".format(
+                    "\n".join(compile_warnings[:10])))
 
         # P3.45.2A — Generate-click preflight on the EDITED text (the
         # header markers reflect split-time text; this re-check closes
