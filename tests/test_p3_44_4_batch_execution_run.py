@@ -266,6 +266,30 @@ class _Harness(unittest.TestCase):
             _process(20)
         _process(250)
 
+    def wait_engine_idle(self, timeout=15):
+        """P3.45.5 — bounded, condition-based engine-idle barrier.
+
+        Replaces the old blind ``_process(400)`` wait in the regen-stop
+        test: under suite load the previous generation's future could
+        still be in flight (audio save + history/asset registration run
+        INSIDE the pipeline, before the future completes), so the regen
+        submit hit the busy-retry chain and — measured 2-3 times per N
+        suite runs — the regen job ended FAILED ("Engine was busy after
+        10 retries."). ``engine.is_generating`` is the EXACT precondition
+        ``submit_generation`` checks, so waiting on it removes the race
+        without touching production stop semantics; failures terminate
+        clearly at the bounded timeout instead of silently passing.
+        """
+        eng = self.win._engine
+        t0 = time.time()
+        while eng.is_generating and time.time() - t0 < timeout:
+            _process(20)
+        self.assertFalse(
+            eng.is_generating,
+            "engine still generating after {0}s — engine-idle barrier "
+            "timeout (the regen submit would hit the busy-retry chain)"
+            .format(timeout))
+
     def dialog(self):
         return self.win._batch_dialog
 
@@ -481,6 +505,28 @@ class TestStopSemantics(_Harness):
                              "flipping to Stopped")
         FakeHiggsModel.delay_s = 0.0
 
+    def wait_generation_inflight(self, calls_before, timeout=15):
+        """P3.45.5 — bounded, condition-based IN-FLIGHT barrier.
+
+        Waits until the fake model call has actually RECEIVED the request
+        (``FakeHiggsModel.calls`` grows) — i.e. the generation is genuinely
+        executing on the worker (inside the 0.4 s fake model call), not
+        merely queued. This pins the stop to the §14 A-case the test
+        documents ("Stop while the generation is in flight") and closes
+        the submit-to-start race window where a pre-start cancel surfaces
+        as a CANCELLED future (a separate, documented product finding —
+        see OPEN_BUGS P3.45.5 SS-7; deliberately NOT fixed in the
+        no-product-change P3.45.5 round).
+        """
+        t0 = time.time()
+        while len(FakeHiggsModel.calls) <= calls_before \
+                and time.time() - t0 < timeout:
+            _process(20)
+        self.assertGreater(
+            len(FakeHiggsModel.calls), calls_before,
+            "the regen generation never reached the model call within "
+            "{0}s (in-flight barrier timeout)".format(timeout))
+
     def test_regen_run_stop_leaves_others_pending(self):
         """The regen execution run is exactly the one reset job: Stop of
         a regen run never touches the other PENDING rows."""
@@ -491,13 +537,21 @@ class TestStopSemantics(_Harness):
         dlg._on_start()
         self.wait_batch()
         self.assertEqual(bm.jobs[1].status, JobStatus.COMPLETED)
-        # Let the worker fully finalize (audio save + history/asset
-        # registration) before the regen start — under suite load a
-        # still-busy engine turns the regen submit into a retry chain.
-        _process(400)
+        # P3.45.5: deterministic engine-idle barrier — the regen submit
+        # requires the previous generation's future to be done (the
+        # exact ``submit_generation`` precondition); waiting on the REAL
+        # condition replaces the old blind 400 ms sleep whose elapse
+        # under suite load produced the FAILED regen flake.
+        self.wait_engine_idle()
 
         # Regenerate row 2 (the MainWindow production path).
+        calls_before = len(FakeHiggsModel.calls)
         self.win._on_batch_regen(1)
+        # P3.45.5: wait for the GENUINE in-flight state (the model call
+        # received the request) BEFORE stopping — the row status alone
+        # (GENERATING, set before the submit) admits the submit-to-start
+        # race window; the in-flight condition does not.
+        self.wait_generation_inflight(calls_before)
         self.wait_status(1, JobStatus.GENERATING)
         self.assertEqual(bm.jobs[0].status, JobStatus.PENDING)
         self.assertEqual(bm.jobs[2].status, JobStatus.PENDING)

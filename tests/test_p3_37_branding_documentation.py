@@ -7,9 +7,11 @@ Validation for the GUINEO rebrand round:
   A. DOCUMENTATION (file-level, §54 of the brief; revised in the
      P3.44.5 docs round: README.md is now British-English only and the
      Hungarian documentation lives in the separate README_HU.md):
-     - README.md exists (EN | British English) and README_HU.md exists
-       (HU | Magyar); the two describe the same current functionality
-       and cross-link each other.
+     - README.md exists (English-only, British English, `english`
+       anchor — P3.45.5/SS-3: the literal language header was removed
+       by the deliberate README rewrite cd5e122) and README_HU.md
+       exists (HU | Magyar); the two describe the same current
+       functionality and cross-link each other.
      - GUINEO is the visible product identity; obsolete user-facing
        SpeechStudio branding is gone from user docs (historical /
        technical mentions — SpeechStudio.py, SpeechStudio_clean.zip,
@@ -142,9 +144,24 @@ class TestDocumentation(unittest.TestCase):
         self.assertIn('<a id="magyar"></a>', text)
 
     def test_readme_has_british_english_section(self):
+        """P3.45.5 (SS-3 correction): the literal `# EN | British English`
+        header was removed by the deliberate README rewrite (commit
+        cd5e122, "Update README.md") — the English documentation is the
+        WHOLE README.md. The contract is verified structurally: the
+        `english` anchor (the target of the language cross-links and the
+        internal anchor checks) must exist, the file must identify the
+        product, and it must NOT contain a second language section (the
+        Hungarian guide lives in README_HU.md). British spelling itself
+        is pinned by test_british_english_spelling_in_en_section."""
         text = _read(README_PATH)
-        self.assertIn("# EN | British English", text)
-        self.assertIn('<a id="english"></a>', text)
+        self.assertIn('<a id="english"></a>', text,
+                      "the English-section anchor must exist (language "
+                      "cross-link and internal-anchor target)")
+        self.assertIn("# GUINEO", text,
+                      "the README title must identify the product")
+        self.assertNotIn("# HU |", text,
+                         "README.md is the English-only document; the "
+                         "Hungarian guide lives in README_HU.md")
 
     def test_readme_cross_links_language_files_and_repository(self):
         """P3.44.5 docs round: the two language files cross-link each

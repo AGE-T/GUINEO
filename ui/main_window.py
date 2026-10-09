@@ -3442,8 +3442,12 @@ class MainWindow(QMainWindow):
 
         P3.28:
           - GENERATION STRUCTURE EVENT: the splitter run materialises the
-            Scene's ``expected_audio_slots`` (only here and on re-detect —
-            never on a keystroke; §0 product rule).
+            Scene's ``expected_audio_slots`` (only HERE — the Generate
+            Long structure event; never on a keystroke and never on
+            re-detect; §0 product rule. P3.45.5 docstring correction:
+            re-detect replaces block ids and leaves the RECORDED slot
+            structure unchanged until the next Generate Long — the
+            documented "Unlinked part" detachment, not a slot writer).
           - GENERATION RUN: one activation allocates a scene-scoped run id
             ("{scene8}-r{NNN}") carried by every job/asset/history entry.
           - VERSIONS: per-slot monotonic max+1 (asset-aware) with the

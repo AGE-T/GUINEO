@@ -29,7 +29,8 @@ only depend on the layer below it; reverse dependencies are forbidden.
 |  - preset_manager.py, batch_manager.py                       |
 |  - voice_manager.py, audio_manager.py, model_manager.py      |
 |  - generation_manager.py                                     |
-|  - Pure Python (no Qt imports)                               |
+|  - Pure Python (no Qt imports; 2 documented exception        |
+|    sites — see Dependency Rules below)                       |
 +-------------------------------------------------------------+
 |  External Layer                                              |
 |  - torch, transformers, soundfile, PyYAML                    |
@@ -40,14 +41,62 @@ only depend on the layer below it; reverse dependencies are forbidden.
 
 | Layer        | May import                                                   | May NOT import                          |
 |--------------|---------------------------------------------------------------|------------------------------------------|
-| UI           | Engine, PySide6, ui.*                                         | torch, transformers, engine internals * |
-| Engine       | External, engine.*                                            | PySide6, ui.*                            |
+| UI           | PySide6, ui.*, the Engine facade root + the tiers below *    | torch, transformers, unapproved engine.* |
+| Engine       | External, engine.*                                            | PySide6/PyQt, ui.* (2 documented sites) |
 | External     | (third-party)                                                 | SpeechStudio modules                     |
 
-\* The UI talks to the Engine through the `Engine` facade only
-(`from engine import Engine`).  It may NOT directly import
-`model_manager`, `audio_manager`, etc., except for read-only data
-classes in `engine.models`.
+\* P3.45.5 reconciliation — the UI→engine import policy is a
+TWO-TIER whitelist, enforced by `tools/verify_architecture.py`
+(full-AST scanning: lazy/function-level imports cannot bypass it;
+the old vacuous "engine" prefix entry was removed):
+
+**Tier 1 — by-design allowances** (data classes, display lookups,
+managers owned by their dialogs): `engine.models`, `engine.events`,
+`engine.errors`, `engine.version`, `engine.logger`,
+`engine.higgs_tokens`, `engine.narration_blocks`,
+`engine.narration_block_manager`, `engine.prompt_optimizer`,
+`engine.prompt_builder`, `engine.preset_manager`,
+`engine.batch_manager`, `engine.settings_manager`,
+`engine.history_manager`, `engine.voice_manager`,
+`engine.audio_manager`, plus the facade root import
+`from engine import Engine` (exact name only).
+
+**Tier 2 — DOCUMENTED BASELINE DEBT** (direct engine-module imports
+that already existed at the P3.45.5 baseline; recorded so the verifier
+enforces "no NEW direct imports" while the facade consolidation
+decision — the D-R10 family — remains deliberate future work, NOT
+started): `engine.audio_provenance`, `engine.character_colors`,
+`engine.combined_audio`, `engine.duration_estimation`,
+`engine.narration_splitter`, `engine.output_guard`,
+`engine.project_exporter`, `engine.project_manager`,
+`engine.prompt_state`, `engine.recents_manager`,
+`engine.scene_persistence`. The verifier prints this debt on every
+run (transparency); removing entries requires this manifest's
+explicit decision. Anything else under `engine.*` — e.g.
+`engine.engine`, `engine.model_manager`, `engine.generation_manager`,
+`engine.workers`, `engine.block_detector`, `engine.sentence_boundaries`
+— is an internal and importing it from the UI is a VIOLATION.
+
+The old claim "the UI talks to the Engine through the facade only"
+described intent, not the codebase: 11 tier-2 modules were already
+imported directly before this reconciliation. The manifest now
+records that honestly instead of pretending conformance.
+
+**Engine-side Qt exceptions** (exactly two, per-file and per-module;
+every other Qt/PyQt import — including lazy ones — fails the gate):
+
+1. `engine/version.py` → `PySide6` (root package only):
+   `get_qt_version()` probes `PySide6.__version__` for the debug-info
+   panel — the same exception-guarded reporting pattern as the torch /
+   transformers probes in the same file. No Qt machinery is imported
+   or instantiated.
+2. `engine/batch_manager.py` → `PySide6.QtCore` (QTimer only):
+   the busy-retry and inter-job pacing timers call
+   `QTimer.singleShot` directly; both paths run on the UI thread via
+   the `marshal_to_ui` contract (see §4). KNOWN ARCHITECTURAL DEBT
+   recorded by the P3.45.5 audit; the documented future task is
+   routing the scheduler through a UI-injected callable. No other Qt
+   module may appear in this file.
 
 ## 3. Module Ownership
 

@@ -14,7 +14,8 @@ AND independently verified.
 
 ## BUG-001: Advanced Preview emits invalid `expressive_normal` token
 
-- **Status**: FIXED-PENDING-VERIFICATION
+- **Status**: **CLOSED** (P3.45.5 — verified fixed; see the Resolution
+  note below; the entry is retained as historical evidence)
 - **Severity**: Critical (prompt correctness)
 - **Discovered**: Post-FINAL-CORRECTION audit
 - **ADR reference**: ADR 003 §7
@@ -99,6 +100,33 @@ confirms that:
 
 An independent reviewer should re-run the tests above and additionally
 verify the model input path end-to-end before marking this CLOSED.
+
+### Resolution (P3.45.5 register update — status CLOSED)
+
+The three closure conditions are now independently verified:
+
+1. **Exact prompt equality, including the model input path**: the
+   P3.44.2 runtime suites (`tests/test_p3_44_2_sfx_pipeline.py`,
+   S1–S5: "Preview == Batch + the token in the MODEL CALL") drive the
+   REAL MainWindow→Engine→BatchManager→worker pipeline (only the
+   native `generate_speech` boundary faked) and assert the exact
+   prompt string that reaches the model call; the preview-equality
+   contract is separately pinned by `tests/test_audit_defect_fixes.py`
+   (Center Preview == Advanced Preview, exact match).
+2. **No `*_normal` token reaches the model in any code path**:
+   `engine/prompt_state.py` `compile_continuous()` (the Advanced
+   Preview compiler) skips emission for any "Normal"/None prosody
+   value — re-verified at the P3.45.5 baseline
+   (`prompt_state.py:580-626`, the documented CRITICAL contract);
+   `PromptBuilder.build()` retains the reference skip
+   (`prompt_builder.py:243-265`).
+3. **Survives real generation runs**: the suites above have been
+   green in EVERY full battery since P3.44.2 (133/133 focused;
+   full batteries 1575, 1583, 1725+ across the P3.44.9 → P3.45.4
+   rounds, re-confirmed green at the P3.45.5 baseline).
+
+The remaining catalog-accuracy work (the placeholder definitions
+themselves) is tracked as BUG-002 and is NOT part of this closure.
 
 ### Related Files
 
@@ -2377,9 +2405,10 @@ estimate/duplication cleanup (P3.45).
 
 ### SS-3 (pre-existing, recorded): P3.37 README documentation test mismatch
 
-- **Status**: **OPEN** (not a P3.44.9 defect — evidence: identical
-  failure with the P3.44.9 changes stashed AND with `README.md` at its
-  last commit `cd5e122`)
+- **Status**: **CLOSED** (P3.45.5 — the test now validates the CURRENT
+  README structure; see the P3.45.5 round register. Not a P3.44.9
+  defect — evidence at discovery: identical failure with the P3.44.9
+  changes stashed AND with `README.md` at its last commit `cd5e122`)
 - **Severity**: Low (test-only): `test_p3_37_branding_documentation.py
   ::test_readme_has_british_english_section` expects the header
   `# EN | British English`, which no longer exists in the README
@@ -2389,7 +2418,10 @@ estimate/duplication cleanup (P3.45).
 
 ### SS-4 (pre-existing, recorded): flaky regen-stop timing test
 
-- **Status**: **OPEN** (flaky; not a P3.44.9 defect — evidence: fails
+- **Status**: **CLOSED** (P3.45.5 — test-side barriers only; see the
+  P3.45.5 round register. The stabilisation work additionally exposed
+  the separate SS-7 pre-start cancel race, which remains OPEN. Not a
+  P3.44.9 defect — evidence at discovery: fails
   3 of 4 runs on the pristine tree, identical signature)
 - **Severity**: Low (test-only): `test_p3_44_4_batch_execution_run.py
   ::test_regen_run_stop_leaves_others_pending` intermittently marks the
@@ -2455,7 +2487,12 @@ estimate/duplication cleanup (P3.45).
 
 ### P3.45-GATE — Block → Part UX / oversized preflight / duration estimation / rendering hardening: scoped and sequenced
 
-- **Status**: **OPEN** (design gate passed; implementation not started)
+- **Status**: **COMPLETED** (P3.45.5 register update — the design gate
+  was fully executed: every scoped slice it produced is implemented,
+  validated, built and pushed — P3.45.1 (badges), P3.45.2A (preflight),
+  P3.45.2B (duration estimation), P3.45.3 (Batch Block identity),
+  P3.45.4 (rendering/UX hardening); see the round registers below.
+  The entry is retained as historical evidence.)
 - **Scope**: full-repository reconnaissance at `eadbfff` (four
   read-only exploration passes + direct re-verification of every
   load-bearing claim, including the re-verification of the reused
@@ -2807,3 +2844,127 @@ fixed, with instrumented before/after measurements
   `verify_integration` stop semantics, pristine-identical).
 
 No backlog items were removed in this round.
+
+## P3.45.5 round — verification and test hygiene
+
+### P3.45.5 — Five verification/test-hygiene defects proven and fixed (CLOSED)
+
+Source: the Post-P3.45 roadmap review audit (every finding re-verified
+at `418b9ed` with code evidence before this round). Fixed:
+
+1. **`tools/verify_architecture.py` whitelist was vacuous** — the
+   top-level name `"engine"` inside its own whitelist made the
+   `engine.*` prefix check unfireable (any engine submodule passed);
+   scanning covered only top-level imports (lazy imports bypassed both
+   layer rules). FIXED: the facade root is allowed ONLY as the exact
+   import `engine` (plus facade re-export names, resolved against the
+   real `engine/` package contents); a TWO-TIER whitelist (16 by-design
+   modules + the 11 documented baseline-debt modules the UI already
+   imported — printed on every run for transparency); FULL-AST scanning
+   (lazy/function-level imports can no longer bypass; relative imports
+   resolved; `from engine import <submodule>` detected); the engine
+   "no Qt" rule now also scans lazily with exactly two per-file,
+   per-module documented exceptions (`engine/version.py` → `PySide6`
+   version-probe; `engine/batch_manager.py` → `PySide6.QtCore` QTimer —
+   the known debt). `architecture_manifest.yaml` §2 reconciled: it now
+   distinguishes the enforced rules from the documented baseline debt
+   instead of claiming a facade-only architecture the code never had.
+   Regression-locked by `tests/test_p3_45_5_verification_hygiene.py`
+   (real tree passes; approved tiers/facade pass; arbitrary NEW
+   engine imports rejected top-level, lazy, relative-escaped and via
+   facade-name smuggling; engine lazy-Qt rejected; exceptions are
+   module-scoped).
+2. **`tools/verify_integration.py` encoded a pre-P3.44.4 stop
+   expectation** — it called `stop()` on a manager that had NEVER
+   STARTED and expected SKIPPED, contradicting the documented §14
+   contract (idle stop = no-op; never-run jobs stay PENDING); the tool
+   had been red since the repository's first commit (root `8d14815`).
+   FIXED: the intended "stop cancels queued work" coverage is preserved
+   by establishing the ACTIVE state first (selective run: in-flight
+   member → SKIPPED, pending member → SKIPPED, never-run non-member →
+   PENDING untouched) PLUS an explicit idle-stop no-op scenario.
+   Unit-level §14 coverage added against the real BatchManager.
+3. **SS-3** — `test_p3_37_branding_documentation.py` asserted the
+   literal `# EN | British English` header deleted by the owner's
+   deliberate README rewrite (`cd5e122`). FIXED: the test now verifies
+   the CURRENT structure (the `english` anchor, the product title, the
+   English-only document) — spelling stays pinned by the dedicated
+   British-spelling test. The module is 33/33 green.
+4. **P3.44.4 regen-stop flake** — the test synchronised on a blind
+   `_process(400)` sleep; under load the regen submit hit the
+   busy-retry chain and the job ended FAILED. FIXED (test-side only):
+   a bounded engine-idle barrier (`engine.is_generating` — the exact
+   `submit_generation` precondition) before the regen, plus a bounded
+   IN-FLIGHT barrier (the fake model call received the request) before
+   the stop, pinning the test to its documented §14 A-case. Production
+   stop semantics untouched. Stability: 30/30 isolated, 15/15 under
+   2-CPU contention, 5× whole-file 12/12, 175-test multi-file
+   in-battery-position chunk — all green.
+5. **False docstrings + stale register entries** —
+   `ui/main_window.py` and `engine/audio_provenance.py` claimed
+   re-detect materialises `expected_audio_slots` (the sole production
+   writer is the Generate Long structure event — grep/AST-proven).
+   FIXED; BUG-001 → **CLOSED** (its three closure conditions now
+   independently verified: model-input prompt equality via the
+   P3.44.2 runtime suites, no `*_normal` emission anywhere, green in
+   every battery since P3.44.2); P3.45-GATE → **COMPLETED**
+   (P3.45.1–P3.45.4 all implemented, validated, built and pushed).
+   Historical evidence retained; no entries deleted.
+
+### SS-7 (NEW, discovered by the P3.45.5 stabilisation work) — pre-start cancel race renders a stopped job FAILED
+
+- **Status**: **OPEN** (product defect, PROVEN by logs; deliberately
+  NOT fixed in P3.45.5 — this round's scope is strictly
+  no-product-behaviour-change)
+- **Severity**: Medium (user-visible: a legitimately stopped job shows
+  a red FAILED row with an empty error instead of Stopped)
+- **Evidence**: 3/30 reproductions of the regen-stop test at the
+  P3.45.5 baseline; captured logs show: job marked GENERATING →
+  `submit_fn` returns the future → Stop lands in the submit-to-start
+  window → `WorkerPool.cancel_generation()` succeeds with
+  `Future.cancel()` (task still queued) → the future completes
+  CANCELLED → `BatchManager._on_job_done` takes the exception path
+  (`future.result()` raises `CancelledError`, `str()` empty) →
+  `job.status = FAILED` — no pipeline stage ever ran (no VOICE VERIFY,
+  no Stage 3 log lines).
+- **Contract violation**: §14/P3.30(d) — "a cooperative cancel renders
+  as a USER STOP (SKIPPED), never as a red FAILED row". The
+  result-based cooperative cancel (`GenerationResult(cancelled=True)`)
+  is handled; the PRE-START cancel (concurrent.futures CANCELLED
+  state) is not.
+- **User-reachable**: Stop pressed within the submit-to-start window
+  of any batch job (or the single-generation Stop at
+  `main_window.py:2516`, same window).
+- **Fix direction** (for its own task): in `_on_job_done`'s exception
+  path, check `future.cancelled()` (and/or `was_stopped`) →
+  `SKIPPED` / "Stopped by user." instead of FAILED. Three lines; must
+  be validated against the full P3.44.4 suite.
+- **Disposition**: deferred to the next implementation round — fixing
+  it is a product behaviour change in the frozen P3.44.4 stop zone and
+  requires its own evidence-first task per the house discipline.
+
+### Residuals (recorded; each needs its own decision before any change)
+
+- The P3.45.5 test-side barriers deliberately do NOT sample the
+  SS-7 window (the stop lands genuinely in flight); the two other
+  stop tests (`test_stop_selective_run_leaves_non_member_untouched`,
+  `test_stop_whole_queue_run_flips_all_pending`) still use
+  `wait_status(GENERATING)` alone and can theoretically sample it —
+  the flake there is bounded by the same SS-7 fix.
+- The second `_process(400)` in
+  `test_late_completion_callback_has_no_effect` is a Qt-event-queue
+  DRAIN after an injected stale callback (no engine-state condition
+  exists to wait on) — intentionally left (not the identified flake's
+  synchronisation).
+- The `QObject::startTimer` stderr warning from
+  `tools/verify_integration.py`'s unchanged duration-source check
+  (`_after_job` → `QTimer.singleShot` without an event loop) is
+  pre-existing (proven identical on the pristine tool) and cosmetic
+  (exit 0; part of the documented batch_manager QTimer debt).
+- P3.27B-E1 (SSH06 modal poisoning) and SS-6 (GL-shim hard-coded
+  path) remain OPEN as before (environment/test-infrastructure).
+
+No backlog items were removed in this round (BUG-001 and P3.45-GATE
+were status CORRECTIONS, not deletions; SS-3, SS-4 and the
+`verify_integration` false-red are closed as FIXED by this round's
+changes with their register sections above documenting the evidence).

@@ -130,8 +130,12 @@ def plain_slot_id(part_index: int) -> str:
 def materialize_expected_slots(parts: List[Any]) -> List[Dict[str, Any]]:
     """Build the expected slot list from a splitter run's parts.
 
-    Slots are materialised ONLY by explicit generation structure events
-    (Generate Long preview / Re-detect) — never on a keystroke (§0).
+    Slots are materialised ONLY by the Generate Long structure event —
+    never on a keystroke and never on Re-detect (§0; P3.45.5 docstring
+    correction: the sole production writer is the Generate Long call in
+    ``MainWindow._start_long_narration`` — Re-detect replaces block ids
+    and leaves the recorded slot structure unchanged until the next
+    Generate Long).
 
     Each slot dict: {slot_id, block_id, block_label, part_index,
     part_of_block, speaker, character_id}. ``block_id`` is None for

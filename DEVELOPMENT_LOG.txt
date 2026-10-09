@@ -4393,3 +4393,132 @@ kapcsolatlan refaktor. A P3.45.5 NEM kezdődött el.
 DOKUMENTÁCIÓ: docs/design/P3_45_4_RENDERING_UX_HARDENING.md (8 szakasz);
 OPEN_BUGS.md P3.45.4 szakasz (CLOSED + vizsgált-de-változatlan + reziduumok;
 SEMMI bejegyzés nem lett törölve). A P3.45.4 ITT ÁLL MEG.
+
+P3.45.5 — VERIFICATION AND TEST HYGIENE (karbantartási kör: a
+verifikációs kapuk megbízhatósága, TERMÉK-VISELKEDÉS-VÁLTOZÁS NÉLKÜL)
+================================================================================
+DÁTUM: jelen futam. ALAP: main @ 418b9ed (P3.45.4 build-commit; origin
+azonos, tiszta munkafa — a sandbox visszaállása UTÁN friss klónnal és a
+dokumentált recept szerint újjáépített környezettel: PySide6 6.11.2 +
+pytest 9.0.2 + sounddevice + libEGL-shim /tmp/gllibs; a P3.45.4 suite
+a friss klónon 28/28 zöld volt bármilyen változtatás előtt). A kör
+forrása: a Post-P3.45 roadmap-audit minden, ebben a feladatban szereplő
+állítását újra-igazoltuk a tényleges HEAD-en kód-evidenciával.
+
+AZ ÖT JAVÍTÁS (mindegyik bizonyított hiba; termékkód-viselkedés
+változatlan — a production fájlokban CSAK két docstring változott):
+1) tools/verify_architecture.py — A KAPU FOGAZÁSA. A whitelistben ülő
+   top-level "engine" név miatt a facade-szabály SOHA nem lőhetott
+   (bármely engine.audit_everything átment); a szkennelés csak a
+   top-level importokat látta (a lazy importok MINDKÉT rétegszabályt
+   megkerülték — a batch_manager lazy QTimer-je és a version.py lazy
+   PySide6 verzió-próbája láthatatlan volt). JAVÍTVA: a facade-gyökér
+   CSAK pontos névként engedélyes (a "from engine import NÉV"
+   névfeloldása a valós engine/ csomagtartalom ellen — abszolút ÉS
+   relatív útvonalra is); KÉTSZINTŰ whitelist (16 by-design modul + a
+   már meglévő 11 baseline-adósság modul — minden futáskor KIÍRVA,
+   transzparens); TELJES-AST szkennelés (lazy/függvénytörzsi importok
+   is; relatív importok abszolút feloldása; a "from ...engine import
+   X" menekülés zárva); az engine "nincs Qt" szabály ugyanígy
+   full-AST, KETTŐ per-fájl, per-modul dokumentált kivétellel
+   (engine/version.py → PySide6 verzió-riport-próba;
+   engine/batch_manager.py → PySide6.QtCore QTimer, az ismert
+   dokumentált adósság). A D-R10 facade-refaktor NEM kezdődött el.
+2) architecture_manifest.yaml §2 — ŐSZINTE EGYEZTETÉS: a manifest most
+   azt írja le, AMI VAN (két-szintű whitelist, a 11 modulos baseline-
+   adósság, a két engine-oldali Qt-kivétel), nem azt a facade-only
+   architektúrát, amit a kód sosem teljesített; a szabály (jövőbeli
+   változtatások ellen) és az adósság (dokumentált állapot) elválik.
+3) tools/verify_integration.py — A DOKUMENTÁLT §14 STOP-SZERZŐDÉS. A
+   régi szcenárió soha-nem-indított managert stoppolt és SKIPPED-et
+   várt (pre-P3.44.4 elvárás; a gyökér-commit óta vörös). JAVÍTVA: az
+   eredeti szándék („a stop elveti a sorban álló munkát") megőrizve —
+   AKTÍV, szelektív futás (soha-nem-teljesedő submit-future: a job
+   pontosan úgy marad repülésben, mint egy valódi generálás; jA
+   GENERATING.assert) után stop: jA (tag, repülésben) → SKIPPED, jB
+   (tag, pending) → SKIPPED, jC (soha nem futott) → PENDING ÉRINTETLEN;
+   plusz egy explicit idle-stop no-op szcenárió (a §10). A
+   duration-forrás ellenőrzés változatlan. A QObject::startTimer
+   stderr-warning a változatlan duration-check útvonaláról előzőleg
+   is létezett (pristin-azonos, kozmetikai, exit 0).
+4) SS-3 — tests/test_p3_37_branding_documentation.py: a teszt a jelenlegi
+   README-szerkezetet igazolja (english horgony + # GUINEO cím +
+   egynyelvű angol dokumentum — a HU szakasz a README_HU.md-ben él), nem
+   a cd5e122 által tudatosan törölt literál fejlécet; a brit helyesírás
+   továbbra is a dedikált helyesírás-tesztben rögzített. 33/33 zöld.
+5) P3.44.4 stop-timing stabilizálás — CSAK teszt-oldali barrier-ek, a
+   produkciós stop-szemantika érintetlen: wait_engine_idle (korlátozott,
+   feltétel-alapú, engine.is_generating — a submit_generation PONTOS
+   előfeltétele) a regen ELŐTT; wait_generation_inflight (korlátozott, a
+   fake modellhívás fogadására vár) a stop ELŐTT — a teszt a
+   dokumentált §14 A-esetre rögzül. Stabilitás: 30/30 izolált; 15/15
+   két-CPU-égető terhelés alatt; 5× teljes fájl 12/12; 175 tesztes
+   többfájlos, akku-pozíciós darab — mind zöld. A második _process(400)
+   (elavult callback utáni Qt-eseménysor-leürítés) tudatosan maradt.
+6) Docstringek + regiszter: main_window.py és audio_provenance.py — a
+   slot-materializáció KIZÁRÓLAG a Generate Long szerkezeti esemény
+   (soha nem re-detect; a re-detect blokk-id-ket cserél és a rögzített
+   struktúrát érintetlenül hagyja) — AST-igazolva: pontosan EGY
+   produkciós hívási hely. OPEN_BUGS: BUG-001 → CLOSED (a három
+   lezárási feltétel most önállóan igazolt: modellbemenet-prompt
+   egyezés a P3.44.2 futásidejű suite-ekben; nincs *_normal kibocsátás;
+   minden akku zöld P3.44.2 óta); P3.45-GATE → COMPLETED
+   (P3.45.1–P3.45.4 mind leszállítva); SS-3/SS-4 → CLOSED. SEMMI
+   történeti evidencia nem lett törölve.
+
+ÚJ LELET A STABILIZÁLÁS SORÁN — SS-7 (OPEN, dokumentált, szándékosan
+NEM javítva ebben a körben): pre-start cancel-verseny. A stop, ha a
+job GENERATING-jelzése és a worker feladata-felvétele közti ablakban
+érkezik, a Future.cancel() SIKERES (a task még sorban) → a future
+CANCELLED-ként készül el → _on_job_done kivétel-ága
+(CancelledError, üres üzenet) → job FAILED — sérti a §14/P3.30(d)
+szabályt („kooperatív cancel mindig USER STOP, sosem piros FAILED
+sor"). Bizonyíték: 3/30 reprodukció teljes logokkal (egyetlen
+pipeline-szakasz sem futott le). Javítási irány (saját feladatnak):
+_on_job_done kivétel-ágában future.cancelled()/was_stopped → SKIPPED
+/„Stopped by user."; termékváltozás a fagyasztott P3.44.9-zónában →
+saját, evidencia-először feladat. A P3.45.5 teszt-barrierek
+tudatosan nem mintavételezik ezt az ablakot.
+
+TESZTEK: tests/test_p3_45_5_verification_hygiene.py — 31 fókuszált
+teszt (verifikátor: valós fa átmegy + adósság-riport; tier-1/tier-2/
+facade-gyökér/lazy-baseline engedélyezett; tetszőleges ÚJ engine-import
+elutasítva top-level, lazy, relatív-menekülés, facade-név-csempészet
+és sima import útján; ML-import elutasítva; engine lazy-Qt elutasítva;
+a két kivétel engedélyezett ÉS modul-hatókörű; engine→ui elutasítva;
+§14 stop-szerződés egység-szinten valódi BatchManager-en + az eszköz
+exit 0; SS-3 szerkezeti szerződés + a modul zöldje; barrier-forrás-
+szerződések; docstring-igazolás + egyetlen hívási hely; regiszter-
+státuszok). Fókusz 31/31 KÉTSZER.
+
+VALIDÁCIÓ (a végleges implementációs fán): TELJES akku 3 darabban:
+538 + 5 (SSH12 osztály külön, a dokumentált P3.27B-E1 workaround) +
+540 + 680 passed + 35 subteszt = 1763 passed + 35 subteszt, NULLA
+hiba — a projekt történetének első teljesen zöld teljes akkufutása
+(SS-3 zárva, a flake stabilizálva, verify_integration zöld; a
+korábban dokumentált „két előzőleg létező hiba" már nem létezik).
+verify_compile 154/154; verify_architecture PASS (adósság-riporttal);
+verify_integration PASS; verify_functional_integrity 80/80; launch
+smoke 12/12 a valódi belépési útvonalon (SpeechStudio.py import →
+QApplication → MainWindow → tiszta leállás; nem commitált próba).
+Fagyasztott szerződések újravalidálva a teljes akkuban: P3.45.4 28,
+P3.45.3 40, P3.45.2B 33, P3.45.2A 42, P3.45.1 20, P3.44.9 76+35,
+P3.44.9.1 19, P3.44.4 12, P3.44.1 23 — mind zöld.
+
+HATÁRKAPU-ELLENŐRZÉS: nincs termékviselkedés-változás (production
+fájlokban csak 2 docstring); az SS-7 termékhiba NINCS javítva
+(dokumentálva a saját feladatához); a D-R10 facade-refaktor NINCS
+elkezdve (a két engine-oldali Qt-kivétel dokumentált adósság); nincs
+D-R9/D-R7/D-R10 megvalósítás; nincs re-detect rekonsziliáció; nincs
+speaker-turn séma-változás; nincs OpenGL/transzparencia-változás;
+nincs dead-code-nyugdíjaztatás; nincs slot_id/generation_run/
+part_version-változás; nincs Scene Combine- vagy Manual Concatenate-
+változás; a P3.44.9/P3.44.9.1/P3.45.1/P3.45.2A/P3.45.2B/P3.45.3/
+P3.45.4 fagyaszott szerződések változatlanok (teljes akku zöld).
+A P3.45.6 NEM kezdődött el.
+
+DOKUMENTÁCIÓ: docs/design/P3_45_5_VERIFICATION_TEST_HYGIENE.md (7
+szakasz); OPEN_BUGS.md P3.45.5 szakasz (öt CLOSED javítás + SS-7 ÚJ
+OPEN lelet + reziduumok; SS-3/SS-4 státusz-javítás; SEMMI bejegyzés
+nem lett törölve — a BUG-001/P3.45-GATE státuszok JAVÍTÁSOK,
+törlések nem). A P3.45.5 ITT ÁLL MEG.

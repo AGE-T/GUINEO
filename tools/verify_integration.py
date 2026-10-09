@@ -6,7 +6,10 @@ SpeechStudio Integration Verification
 Runs a tiny end-to-end smoke test that exercises:
 
     1. PresetManager save / list / apply (via Preset dataclass).
-    2. BatchManager queue + retry + stop semantics.
+    2. BatchManager queue + stop semantics (the documented §14
+       contract: stopping an ACTIVE execution run — in-flight member
+       and pending members become SKIPPED, never-run non-members stay
+       PENDING — plus the documented idle-stop no-op) + duration source.
     3. Pipeline SHA-256 logging markers (static check).
 
 This script does NOT require PySide6 or the actual Higgs model; it
@@ -113,36 +116,81 @@ def _check_batch_manager(root: str) -> List[str]:
         violations.append(
             "to_request() lost prompt text: {0}".format(req.text))
 
-    # --- stop() marks PENDING as SKIPPED ---
+    # --- §14 stop contract: stopping an ACTIVE execution run ---
+    # P3.45.5 correction: the old scenario called stop() on a manager
+    # that had NEVER STARTED and expected SKIPPED — a pre-P3.44.4
+    # expectation contradicting the documented contract (an idle stop
+    # is a no-op; never-run jobs stay PENDING; the tool has been red
+    # since the repository's first commit because of it). The intended
+    # coverage — "stop cancels queued work" — is preserved by
+    # establishing the ACTIVE state first, and the idle behaviour is
+    # now covered explicitly below.
     calls = {"n": 0}
 
-    def fake_submit(request):
+    def pending_submit(request):
         calls["n"] += 1
         f: Future = Future()
-        # Always succeed
-        f.set_result(GenerationResult(
-            success=True,
-            output_path="outputs/x.wav",
-            output_duration=2.5,
-            generation_time=1.0,
-        ))
+        # Never completes: the job stays in flight exactly like a real
+        # generation inside generate_speech() (deterministic, no Qt
+        # timer and no event loop needed).
         return f
 
     mgr = BatchManager(
-        submit_fn=fake_submit,
+        submit_fn=pending_submit,
         cancel_fn=lambda: True,
         marshal_to_ui=lambda fn: fn(),
     )
-    mgr.add_job(BatchJob(name="j1", prompt="hello"))
-    mgr.add_job(BatchJob(name="j2", prompt="world"))
+    mgr.add_job(BatchJob(name="jA", prompt="hello"))   # in-flight member
+    mgr.add_job(BatchJob(name="jB", prompt="world"))   # pending member
+    mgr.add_job(BatchJob(name="jC", prompt="idle"))    # never-run non-member
+    mgr.start(only=[0, 1])
+    if mgr.jobs[0].status != JobStatus.GENERATING:
+        violations.append(
+            "after start(only=[0,1]), job jA status={0} (expected "
+            "GENERATING — the run must be active before stop())".format(
+                mgr.jobs[0].status))
+    if mgr.jobs[2].status != JobStatus.PENDING:
+        violations.append(
+            "job jC must stay PENDING (never part of the run)")
+
     mgr.stop()
-    jobs = mgr.jobs
-    for j in jobs:
-        if j.status != JobStatus.SKIPPED:
+    stopped = [j.status for j in mgr.jobs]
+    # §14: A (in flight, member) -> Stopped; B (member, pending) ->
+    # Stopped; C (never ran, not a member) -> Pending UNTOUCHED.
+    if stopped[0] != JobStatus.SKIPPED:
+        violations.append(
+            "after stop(), in-flight member jA status={0} (expected "
+            "SKIPPED)".format(stopped[0]))
+    if stopped[1] != JobStatus.SKIPPED:
+        violations.append(
+            "after stop(), pending member jB status={0} (expected "
+            "SKIPPED)".format(stopped[1]))
+    if stopped[2] != JobStatus.PENDING:
+        violations.append(
+            "after stop(), never-run job jC status={0} (expected "
+            "PENDING — a stop of a run must not touch non-members)"
+            .format(stopped[2]))
+
+    # --- documented idle-stop behaviour: a no-op ---
+    # stop() on a manager that was NEVER started changes nothing: the
+    # jobs stay PENDING and a stale stop flag is cleared (§10).
+    mgr_idle = BatchManager(
+        submit_fn=pending_submit,
+        cancel_fn=lambda: True,
+        marshal_to_ui=lambda fn: fn(),
+    )
+    mgr_idle.add_job(BatchJob(name="j1", prompt="hello"))
+    mgr_idle.add_job(BatchJob(name="j2", prompt="world"))
+    mgr_idle.stop()
+    for j in mgr_idle.jobs:
+        if j.status != JobStatus.PENDING:
             violations.append(
-                "after stop(), job {0} status={1} (expected SKIPPED)".format(
-                    j.name, j.status))
+                "idle stop(): job {0} status={1} (expected PENDING — "
+                "stop on a never-started manager is a documented no-op)"
+                .format(j.name, j.status))
             break
+    if mgr_idle.is_running:
+        violations.append("idle stop(): manager must not be running")
 
     # --- output_duration comes from result.output_duration (audio length) ---
     # We can't easily run start() without Qt's QTimer for the inter-job
@@ -154,7 +202,7 @@ def _check_batch_manager(root: str) -> List[str]:
     # result) — that method no longer exists. This test was updated to
     # match the current API.
     mgr2 = BatchManager(
-        submit_fn=fake_submit,
+        submit_fn=pending_submit,
         cancel_fn=lambda: True,
         marshal_to_ui=lambda fn: fn(),
     )
