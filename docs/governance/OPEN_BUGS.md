@@ -3012,3 +3012,33 @@ confined to `engine/batch_manager.py::_on_job_done` (explicit
 `concurrent.futures.CancelledError` classification through the
 authoritative under-lock stop semantics); stop()/selection/retry/
 queue semantics untouched; P3.44.4 §14 contract re-validated green.
+
+### P3.45.6 Phase 2 — Narration Block range integrity defects: CLOSED
+
+Three proven defects closed by the Phase 2 change set (root causes,
+reproductions, fixes and regression evidence in
+docs/design/P3_45_6_FINAL_STABILITY_NARRATION_INTEGRITY.md §2):
+
+1. **Ambiguous prefix/suffix edit attribution** (wrong-block symmetry
+   on adjacent identical passages; multi-edit coalescing that bleeds a
+   middle block into its neighbours' text and collapses the last block
+   to a trailing fragment — the reported "second Part containing a
+   trailing substring" / mid-word / stale-fragment symptoms). CLOSED by
+   the exact-position `contentsChange` feed through the SAME P3.44.9
+   transformer (probe-proven semantics for every edit type).
+2. **Zero validation of Block ranges in the generation path** (the
+   splitter silently sliced stale/overlapping/out-of-bounds ranges;
+   legacy persisted ranges installed unvalidated). CLOSED by the
+   `validate_block_ranges` Generate Long precondition — invalid ranges
+   fail CLOSED with full diagnostics and the Re-detect recovery
+   surface; no Part/slot/job is created from an invalid source.
+3. **Whole-document swap semantics preserved**: the first-cut design
+   regressed the P3.44.7 substitution-edit contract (caught by the
+   frozen suite BEFORE commit); the hold-then-resolve design restored
+   it exactly — recorded here as a near-miss, not a shipped defect.
+
+Residual (documented, not changed): programmatic whole-document
+substitution swaps keep the frozen coarse attribution (bounded by the
+generation gate + Re-detect recovery); the user's actual saved project
+was not available — the new gate itself will surface any invalid range
+it still carries.

@@ -4571,3 +4571,65 @@ OPEN_BUGS SS-7 → CLOSED (gyökérokoz+javítás+záró bizonyíték);
 P3.45.5-reziduum (két stop-teszt elméleti SS-7-mintavétele) →
 MEGSZÜNT a javítással. Tervezési rekord:
 docs/design/P3_45_6_FINAL_STABILITY_NARRATION_INTEGRITY.md (1. fázis).
+
+2. FÁZIS — NARRÁCIÓS BLOKK TARTOMÁNY-INTEGRITÁS: KÉSZ. Gyökérokoz
+(determinisztikusan reprodukálva, két bizonyított termelő): (A) az
+on_text_changed előtag/utótag-alapú változásbecslése a LEGKORÁBBI
+konzisztens pozícióhoz rendeli a szerkesztést — szomszédos azonos
+szakaszok esetén az ELSŐ példány törlése a MÁSODIKHOZ (a törölt blokk
+átaliasolja a túlélő szöveget saját szemantikával, a túlélő blokk
+megsemmisül minden metaadatával együtt — „a blokk furán viselkedik”
+tünet), TÖBB egymástól független törlés EGY textChanged-emisszióban
+EGY átfogó szerkesztéssé olvad össze (a középső blokk a szomszédai
+szöverébe vérzik át, az utolsó egy „t” töredékre omlik — pontosan „a
+második Part a mondat záró részkarakterlánca tartalmazza” tünet); (B)
+a PromptBlock.from_dict/ok verbatim visszaállítása és a
+set_scene_blocks validálatlan telepítése (átfedő/ótルár tartományok
+érésnek el a generálásig). A forrás: a Batch Part szöveg
+text[start:end] szeletelése ÉLŐ pillanatképen, NULLA validációval.
+
+B VIZSGÁLAT BIZONYÍTÉK (valódi widget-próba): a QTextDocument
+contentsChange(position, removed, added) MINDEN szerkesztéstípushoz
+pontos koordinátákat ad (gépelt; interaktív kijelölés-törlés; beillesztés;
+csere; beillesztés-kijelölésre EGY kombinált emisszió; több soros;
+setPlainText KETTŐ emisszió: clear-all + insert-all; begépelt
+visszavonás/ismétlés PONTOS fordított delták; ismételt szöveg későbbi
+előfordulásának törlése pontos pozícióval); a contentsChange SZIGORÚAN
+a textChanged ELŐTT fut; a setPlainText törli a undo-előzményeket.
+
+JAVÍTÁS (minimális, UGYANAZ a motor): (1)
+NarrationBlockManager.on_document_edit — pontos-pozíciós etetés a
+P3.44.9 _apply_edit_to_blocks-on keresztül (NINCS második
+szerkesztőmotor); a teljes-dokumentum csere (setPlainText
+clear-all+insert-all párja; interaktív mind-kijelölése-törlés)
+VISSZATARTÁSRA kerül és a parancsszintű textChanged → on_text_changed
+oldja fel a FAGYSZTOTT szemantikával (nincs közös → dobás; kis csere →
+durva átalakítás — a P3.44.7 szerződés; előre alkalmazott Replace All
+→ egyenlőségi no-op); az on_text_changed TÖRZSE VÁLTOZATLAN (a
+P3.44.9-es szerződés belépési pontja + feloldó). (2)
+NarrationEditor._on_contents_change bekötés a P3.26 _loading_scene
+őrszemmel és a Replace All körüli elnyomási jelzővel. (3) GENERÁLÁSI
+ELŐFELTÉTEL (fail-closed): validate_block_ranges (tiszta,
+determinisztikus; blokk-azonosító/címke/offsetek/szöveghossz/pontos
+szelet/ok diagnosztikával) + Generate Long kapu a splitter ELŐTT:
+in-bounds/nem-üres/rendezett/nem-átfedő tartományok KÖTELEZŐEK, különben
+a generálás EXAKT diagnosztikával és a meglévő helyreállítási felülettel
+(Re-detect Blocks — P3.44.7-bizonyított szemantika-megőrzés) leáll;
+NINCS Part/slot/job érvénytelen tartományból; NINCS hallgatóló
+levágás; a réseket (gazdátlan sorok) a termék megengedi.
+
+REGRESSZIÓ: a FIRST-CUT terv (clear-all emisszió azonnali dobása)
+REGRESSZÁLTA a P3.44.7 csere-szerkesztési szerződést — a fagyasztott
+suite ELKAPTA commit ELŐTT; a visszatartás+megoldás terv helyreállította
+(zöld). TESZT: tests/test_p3_45_6_block_range_integrity.py — 31 teszt
+KÉTSZER zöld (két defektcsalád karakterizációja a régi úton + a fix a
+pontos úton; a 13 kért forgatókönyv; valódi widget-szerkesztések valódi
+kurzorokkal; kapu-tesztek valódi MainWindow/Engine-en — a splitter
+sosem fut érvénytelen tartományon). Fagyasztott szerződések:
+P3.44.7+P3.44.9+P3.44.9.1+P3.44.8 = 201 passed + 35 alteszt; tágabb
+érintett akku: P3.44.4, P3.26, P3.15, P3.22, P3.23, P3.45.1, P3.45.2A,
+P3.45.2B, P3.45.4 = 258 passed; verify_compile 155/155. A felhasználó
+tényleges „GUINEO / Leírás” projekt fájlja NEM állt rendelkezésre — a
+korrupt állapotok szintetikus dokumentumokon reprodukálódnak; a valódi
+projekt tartományait az új kapu maga is felszínre hozza, ha érvénytelen
+maradna.

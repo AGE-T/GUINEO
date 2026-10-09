@@ -12,7 +12,8 @@ stores block metadata (offsets + overrides + labels).
 """
 
 from __future__ import annotations
-from typing import List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, List, Optional, Tuple
 import difflib
 import uuid
 
@@ -57,6 +58,13 @@ class NarrationBlockManager:
         self._blocks: List[PromptBlock] = []
         self._detector: BlockDetector = detector or HeuristicBlockDetector()
         self._last_text: str = ""
+        # P3.45.6: a whole-document swap (Qt emits setPlainText as TWO
+        # contentsChange edits — clear-all (0, oldLen, 0), then
+        # insert-all (0, 0, newLen)) is HELD here; the command-level
+        # textChanged that follows the completed command resolves it
+        # through the frozen on_text_changed semantics. See
+        # on_document_edit.
+        self._pending_whole_doc_swap: bool = False
 
     @property
     def blocks(self) -> List[PromptBlock]:
@@ -762,7 +770,16 @@ class NarrationBlockManager:
         generation text, phantom blocks after save/load). The edit is
         now transformed through ``_apply_edit_to_blocks`` — the single
         authoritative rule shared with ``on_multi_replace``.
+
+        P3.45.6: this method is ALSO the command-level RESOLVER for a
+        held whole-document swap (see on_document_edit): textChanged
+        fires after the completed Qt command, so the held clear-all +
+        insert-all pair is resolved here through the SAME frozen
+        semantics the pre-P3.45.6 path used (drop when nothing of the
+        old document survives; otherwise the coarse prefix/suffix
+        transform — preserving the P3.44.7 substitution-edit contract).
         """
+        self._pending_whole_doc_swap = False
         if not self._blocks:
             self._last_text = new_text
             return
@@ -792,6 +809,76 @@ class NarrationBlockManager:
             return
         self._blocks = self._apply_edit_to_blocks(
             self._blocks, old_change_start, old_change_end, inserted_len)
+        self._last_text = new_text
+
+    def on_document_edit(self, position: int, removed: int, added: int,
+                          new_text: str) -> None:
+        """Track block offsets through ONE edit with EXACT coordinates.
+
+        P3.45.6 Phase 2 — the authoritative exact-position source is
+        ``QTextDocument.contentsChange(position, charsRemoved,
+        charsAdded)``, empirically proven (real-widget probe) to carry
+        the exact change position for every relevant edit type:
+        typed edits, interactive selection deletion, paste,
+        replacement, paste-over-selection, multi-line edits, undo/redo
+        of typed edits (exact reverse deltas), and programmatic
+        ``setPlainText``. It fires strictly BEFORE ``textChanged``.
+
+        Why the diff path alone was not enough (the reproduced
+        defects): the prefix/suffix inference attributes a change to
+        the earliest position consistent with the two strings —
+        deleting the FIRST of two ADJACENT identical passages is
+        attributed to the second (the surviving copy's block is
+        destroyed, the deleted copy's block survives ALIASED onto the
+        text), and MULTIPLE disjoint edits delivered in ONE textChanged
+        emission coalesce into a single spanning edit (a middle block
+        then bleeds into its neighbours' text and the last block
+        collapses to a trailing fragment — the reported stale-fragment
+        symptoms). The exact-position feed eliminates the ambiguity at
+        the source while feeding the SAME P3.44.9 authoritative
+        transformer ``_apply_edit_to_blocks`` — no second edit engine.
+
+        Whole-document swaps (setPlainText) arrive as TWO emissions —
+        clear-all ``(0, oldLen, 0)`` with the intermediate document
+        empty, then insert-all ``(0, 0, newLen)``. Holding the pair and
+        resolving at command level preserves the P3.44.7
+        substitution-edit contract exactly: the completed command's
+        ``textChanged`` → ``on_text_changed`` compares the REAL old/new
+        texts (never the artificial empty intermediate) and applies
+        the frozen semantics — a small substitution transforms the
+        blocks (offsets re-anchored, semantics preserved through
+        re-detect), a wholly different document drops them, a
+        pre-applied Replace All no-ops on the equality guard, and an
+        interactive select-all delete resolves to the whole-doc drop.
+
+        ``on_text_changed`` REMAINS the frozen P3.44.9 contract entry
+        point and the command-level resolver/safety net.
+        """
+        if not self._blocks:
+            self._last_text = new_text
+            self._pending_whole_doc_swap = False
+            return
+        if self._pending_whole_doc_swap:
+            # Inside a held whole-document swap: every subsequent
+            # emission of the SAME Qt command is held; the command's
+            # textChanged resolves the swap (see on_text_changed).
+            return
+        if new_text == self._last_text:
+            # Pre-applied path (Replace All already transformed the
+            # blocks) or a textually net-zero edit: nothing to do.
+            return
+        if position == 0 and added == 0 and new_text == "":
+            # The clear-all half of a whole-document swap (setPlainText
+            # emission 1; also an interactive select-all delete whose
+            # command-level outcome is the whole-doc drop). HOLD: the
+            # insert-all half (and then textChanged) follows within
+            # the same command — resolving NOW on the artificial empty
+            # intermediate would wrongly destroy blocks whose text
+            # survives a small substitution (the P3.44.7 contract).
+            self._pending_whole_doc_swap = True
+            return
+        self._blocks = self._apply_edit_to_blocks(
+            self._blocks, position, position + removed, added)
         self._last_text = new_text
 
     def on_multi_replace(
@@ -869,3 +956,101 @@ class NarrationBlockManager:
     def clear(self) -> None:
         self._blocks.clear()
         self._last_text = ""
+        self._pending_whole_doc_swap = False
+
+
+# ---------------------------------------------------------------------------
+# P3.45.6 Phase 2 — generation precondition: block-range validation
+# ---------------------------------------------------------------------------
+@dataclass
+class BlockRangeIssue:
+    """One invalid block range, with the diagnostics the phase brief
+    requires: source Block identity, start/end offsets, the CURRENT
+    source length, the exact source slice and the precise reason."""
+
+    block_id: str
+    label: str
+    start_offset: int
+    end_offset: int
+    text_length: int
+    source_slice: str
+    reason: str
+
+    def describe(self) -> str:
+        """Human-readable one-line diagnostic (dialog/log rendering)."""
+        return (
+            "Block '{label}' ({block_id}) range [{start}:{end}) — {reason}; "
+            "current text length is {length}; slice={slice!r}".format(
+                label=self.label or "(unlabelled)",
+                block_id=self.block_id,
+                start=self.start_offset,
+                end=self.end_offset,
+                reason=self.reason,
+                length=self.text_length,
+                slice=self.source_slice[:60]))
+
+
+def validate_block_ranges(
+        blocks: List[PromptBlock], text: str) -> List[BlockRangeIssue]:
+    """Validate every ACTIVE block range against the CURRENT source text.
+
+    P3.45.6 Phase 2 generation precondition. A range is valid when:
+
+      - ``0 <= start_offset < end_offset <= len(text)`` (in bounds,
+        owns at least one character);
+      - the block list is deterministically ordered by start offset;
+      - no two ranges overlap (an overlap duplicates source text into
+        two generation parts — the reported "second Part containing a
+        trailing substring of the first sentence" symptom).
+
+    Gaps (text owned by NO block) are NOT issues: the product permits
+    unassigned blank lines/inter-block text — only the ownership of
+    the ranges actually used must be valid.
+
+    Returns the list of issues (empty = safe to generate). Pure and
+    deterministic: no state, no logging side effects, no mutation of
+    the blocks — the CALLER decides what to do (Generate Long fails
+    closed with these diagnostics; it never silently clamps, never
+    generates from a structurally invalid source document).
+    """
+    issues: List[BlockRangeIssue] = []
+    n = len(text)
+
+    def _issue(block: PromptBlock, reason: str) -> None:
+        s, e = block.start_offset, block.end_offset
+        # The exact source slice under the CURRENT coordinates (Python
+        # slicing never raises; a truncated/empty slice is itself the
+        # diagnostic for an out-of-range range).
+        issues.append(BlockRangeIssue(
+            block_id=block.id,
+            label=getattr(block, "label", "") or "",
+            start_offset=s,
+            end_offset=e,
+            text_length=n,
+            source_slice=text[max(0, s):max(0, e)],
+            reason=reason))
+
+    ordered = sorted(blocks, key=lambda b: b.start_offset)
+    if ordered != list(blocks):
+        # Non-deterministic ordering: report the first out-of-order
+        # block (the structural symptom — sorting must not be silently
+        # imposed on the user's model by generation).
+        for prev, cur in zip(blocks, blocks[1:]):
+            if cur.start_offset < prev.start_offset:
+                _issue(cur, "out of order (starts at {0} after a block "
+                            "starting at {1})".format(
+                                cur.start_offset, prev.start_offset))
+                break
+
+    prev_end = -1
+    for block in ordered:
+        s, e = block.start_offset, block.end_offset
+        if s < 0 or e > n:
+            _issue(block, "out of bounds")
+        elif s >= e:
+            _issue(block, "empty range (owns no characters)")
+        elif s < prev_end:
+            _issue(block, "overlaps the previous block "
+                          "(previous ends at {0})".format(prev_end))
+        prev_end = max(prev_end, e)
+    return issues

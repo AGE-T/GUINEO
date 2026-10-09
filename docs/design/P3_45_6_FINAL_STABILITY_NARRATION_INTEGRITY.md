@@ -133,3 +133,135 @@ Stop → COMPLETED restore.
   (the batch queue continues per the existing run semantics). No
   evidence this path is reachable while the batch dialog owns the
   stop surface; recorded, not changed (minimal-change discipline).
+
+---
+
+## Phase 2 — Narration Block Range Integrity
+
+### 2.1 Root cause (deterministically reproduced)
+
+The reported symptoms (a second Part containing a trailing substring of
+the first sentence; text beginning/ending mid-word; stale fragments
+after large deletions; blocks behaving strangely after line removals)
+trace to the EDIT RECONSTRUCTION, not to the splitter: the source of
+Batch Part text is `text[block.start_offset:block.end_offset]`
+(`engine/narration_splitter.py:621` + the metadata pre-step 310-311)
+over the LIVE editor snapshot — with **zero validation** of the ranges
+anywhere in the generation path. Two proven producers corrupt the
+ranges:
+
+**Producer A — ambiguous prefix/suffix attribution.**
+`NarrationBlockManager.on_text_changed` infers the changed segment by
+common-prefix/common-suffix comparison (no Qt position signal was used
+anywhere in the codebase; `contentsChange` had zero usages).
+
+*Family A1 (wrong-block symmetry, reproduced):* deleting the FIRST of
+two ADJACENT identical passages — the prefix matches through the first
+copy, so the diff attributes the deletion to the SECOND: the DELETED
+copy's block survives untouched (aliased onto the surviving text, with
+its semantics) while the SURVIVING copy's block is REMOVED with all
+its metadata (label/Character/overrides).
+*Family A2 (multi-edit coalescing, reproduced):* two disjoint
+deletions delivered through ONE textChanged emission (undo of a
+compound command, programmatic multi-edit) coalesce into a single
+spanning edit: the middle block — whose text survived both deletions —
+ends up owning nearly the whole document (its Part then contains other
+blocks' sentences), and the last block collapses to a one-character
+trailing fragment `"t"` — exactly "a second Part containing a trailing
+substring of that sentence".
+
+**Producer B — legacy loaded ranges.** `PromptBlock.from_dict` restores
+offsets verbatim and `set_scene_blocks` installs them with NO
+validation against the live document (source-proven) — corrupt/stale
+persisted ranges reach generation silently, including overlaps that
+duplicate source text into two Parts.
+
+### 2.2 Investigation B proof (the exact-position API)
+
+`QTextDocument.contentsChange(position, charsRemoved, charsAdded)` is
+the exact-position API. Real-widget probe (PySide6 6.11.2, offscreen)
+verified for every required edit type: typed edits; interactive
+selection deletion; paste; paste-over-selection (ONE combined
+emission); replacement; multi-line insert/delete; programmatic
+`setPlainText` (TWO emissions: clear-all `(0, oldLen, 0)` then
+insert-all `(0, 0, newLen)`); undo/redo of typed edits (exact reverse
+deltas at the exact original positions); repeated-text later-occurrence
+deletion (exact position 8, NOT the ambiguous earliest). Ordering:
+`contentsChange` fires strictly BEFORE `textChanged`. Reading the
+document inside the handler yields the post-change text.
+`setPlainText` also CLEARS the undo history (so undoing a Replace All
+is structurally impossible — its historical mis-diff is unreachable).
+
+### 2.3 Fix (minimal, same engine)
+
+1. **`NarrationBlockManager.on_document_edit(position, removed, added,
+   new_text)`** — the exact-position feed transforming through the
+   SAME P3.44.9 authoritative `_apply_edit_to_blocks` (no second edit
+   engine). Whole-document swaps (setPlainText's clear-all +
+   insert-all pair; interactive select-all delete) are HELD and
+   resolved at COMMAND level by the `textChanged` → `on_text_changed`
+   resolver — preserving the frozen semantics exactly (drop when
+   nothing survives; coarse transform for substitutions — the P3.44.7
+   contract, regression-caught and fixed during this phase; pre-applied
+   Replace All no-ops on the equality guard). `on_text_changed` is
+   UNCHANGED (byte-identical contract body + resolver flag) and
+   remains the fallback for direct callers.
+2. **`NarrationEditor._on_contents_change`** — wires
+   `document().contentsChange` with the P3.26 `_loading_scene` guard
+   and a `_suppress_contents_change` flag around the pre-applied
+   Replace All swap. After the exact feed runs, the subsequent
+   textChanged diff no-ops on `_last_text` equality.
+3. **Generation precondition (fail closed).** `validate_block_ranges`
+   (pure, deterministic; per-issue diagnostics: block identity, label,
+   offsets, current text length, exact slice, reason) + the Generate
+   Long gate in `_on_generate_long_narration` BEFORE the splitter:
+   in-bounds, non-empty, ordered, non-overlapping ranges or the
+   generation stops with the exact diagnostics + the existing recovery
+   surface (Re-detect Blocks — P3.44.7-proven semantic preservation).
+   No Part/slot/job is constructed from invalid ranges; nothing is
+   silently clamped; gaps remain legal (the product permits unowned
+   text).
+
+### 2.4 Regression tests (`tests/test_p3_45_6_block_range_integrity.py`)
+
+31 tests, run TWICE green: both defect families characterised on the
+old path + fixed on the exact path; the 13 brief scenarios (trailing
+substring; mid-word split; later-occurrence deletion; large
+multi-line deletion; repeated prefix/suffix replacement; save/load
+after transforming edits; legacy invalid ranges blocked; previous
+assets with deleted source text; Generate-after-deletion uses only
+current slices; invalid ranges block before slots/jobs; semantics
+preservation through the exact path; undo/redo round-trip; multi-replace
++ document reset) + real-widget editor tests (real cursor selections,
+paste-over-selection, scene-load guard, Replace All pre-applied
+intact) + gate tests on the real MainWindow/Engine (splitter patched
+to prove it never runs on invalid ranges; warning captures; slots
+untouched).
+
+### 2.5 Results
+
+- Focused 31/31 twice; battery re-run 40/40 (both P3.45.6 suites).
+- Frozen contracts: P3.44.7 + P3.44.9 + P3.44.9.1 + P3.44.8 = 201
+  passed + 35 subtests (including the P3.44.7 substitution-edit
+  contract that the first-cut design regressed — caught by the suite
+  and fixed by the hold-then-resolve design before commit).
+- Wide affected: P3.44.4, P3.26, P3.15, P3.22, P3.23, P3.45.1,
+  P3.45.2A, P3.45.2B, P3.45.4 = 258 passed.
+- `verify_compile` 155/155 on the changed tree.
+
+### 2.6 Residual risks
+
+- The command-level resolver keeps the frozen prefix/suffix semantics
+  for whole-document swaps (programmatic setPlainText / select-all
+  delete). For a substitution swap with repeated text the coarse
+  attribution remains theoretically ambiguous — bounded by the
+  generation gate + re-detect recovery, and unreachable for the
+  reported flows (typed edits are now exact).
+- `QTextDocument.undo()` of block-model operations (split/merge/delete)
+  is not a text edit and was never undoable — unchanged, documented.
+- The user's actual `GUINEO / Leírás` project file was NOT supplied:
+  the corruptions are reproduced on synthetic documents built from the
+  reported patterns; the real project's ranges can only be validated
+  by the user via the final manual checklist (or by the new gate
+  itself, which will now surface any invalid range the project may
+  still carry).

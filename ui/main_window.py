@@ -3333,6 +3333,43 @@ class MainWindow(QMainWindow):
 
         # Get current blocks and global settings
         blocks = self._editor.block_manager.blocks
+
+        # P3.45.6 Phase 2 — GENERATION PRECONDITION: validate every
+        # active Block range against the CURRENT source text BEFORE any
+        # Part/slot/job is constructed. Known-invalid ranges must never
+        # silently reach generation (an out-of-range/overlapping range
+        # duplicates or truncates source text into Batch Parts — the
+        # reported stale-fragment symptom). Fail CLOSED with the exact
+        # diagnostics and the existing recovery surface (Re-detect
+        # Blocks preserves labels/Characters/overrides/SFX/pauses where
+        # recoverable); never clamp, never generate partial output.
+        if blocks:
+            from engine.narration_block_manager import validate_block_ranges
+            range_issues = validate_block_ranges(blocks, text)
+            if range_issues:
+                details = "\n".join(
+                    "  • {0}".format(issue.describe())
+                    for issue in range_issues[:8])
+                if len(range_issues) > 8:
+                    details += "\n  • … and {0} more".format(
+                        len(range_issues) - 8)
+                logger.error(
+                    "Generate Long blocked by invalid Block ranges "
+                    "(%d issues): %s", len(range_issues),
+                    "; ".join(i.describe() for i in range_issues[:8]))
+                QMessageBox.warning(
+                    self, APP_NAME,
+                    "Generate Long stopped: {0} Narration Block range(s) "
+                    "no longer match the current text.\n\n"
+                    "The affected Blocks would generate wrong or "
+                    "duplicated text. Details:\n\n{1}\n\n"
+                    "Recovery: use Re-detect Blocks (it preserves "
+                    "labels, Characters, overrides and SFX/pause "
+                    "insertions where recoverable), or fix the text, "
+                    "then run Generate Long again.".format(
+                        len(range_issues), details))
+                return
+
         params = self._control_panel.get_parameters()
         voice_id = self._control_panel.get_selected_voice_id()
         # Detect Raw Mode: if ON, the user wrote literal Higgs tokens and

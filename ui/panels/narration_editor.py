@@ -846,6 +846,14 @@ class NarrationEditor(QWidget):
         # user had edited the text (corrupting live state and painting
         # stale visuals before the restore finishes).
         self._loading_scene: bool = False
+        # P3.45.6 Phase 2: suppress the exact-position contentsChange
+        # feed around programmatic document swaps whose block-offset
+        # effects were ALREADY applied (Replace All pre-transforms via
+        # on_multi_replace and sets the manager's _last_text; the
+        # setPlainText that follows must not re-transform — Qt emits
+        # it as TWO contentsChange edits, clear-all + insert-all, whose
+        # intermediate text no longer matches the pre-applied state).
+        self._suppress_contents_change: bool = False
         self._global_emotion: Optional[str] = None
         self._global_style: Optional[str] = None
         self._global_speed: str = "Normal"
@@ -1003,6 +1011,19 @@ class NarrationEditor(QWidget):
             "Switch to 'Narration Blocks' for per-section emotion control.\n"
             "Switch to 'Preview' to see the exact prompt sent to the model.")
         self._editor.textChanged.connect(self._on_text_changed)
+        # P3.45.6 Phase 2 — the AUTHORITATIVE exact-position edit feed.
+        # QTextDocument.contentsChange(position, charsRemoved,
+        # charsAdded) carries the exact change coordinates for every
+        # edit type (probe-verified: typed edits, selection deletion,
+        # paste, replacement, paste-over-selection, multi-line edits,
+        # setPlainText, undo/redo of typed edits) and fires BEFORE
+        # textChanged, so the ambiguous prefix/suffix diff in
+        # on_text_changed becomes the no-op fallback instead of the
+        # primary source (repeated-text deletions used to be
+        # misattributed to the earliest matching position, shifting
+        # block ranges onto the WRONG surviving characters).
+        self._editor.document().contentsChange.connect(
+            self._on_contents_change)
         self._editor.cursorPositionChanged.connect(self._on_cursor_moved)
         self._editor.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._editor.customContextMenuRequested.connect(self._on_context_menu)
@@ -1277,6 +1298,38 @@ class NarrationEditor(QWidget):
             self._update_preview()
         elif self._mode == self.MODE_BLOCKS:
             self._render_block_visuals()
+
+    def _on_contents_change(self, position: int, removed: int,
+                            added: int) -> None:
+        """P3.45.6 Phase 2 — exact-position feed of document edits.
+
+        ``QTextDocument.contentsChange`` fires BEFORE ``textChanged``
+        and carries the exact (position, charsRemoved, charsAdded) of
+        THIS edit, so the block manager transforms ranges through the
+        real coordinates instead of the ambiguous prefix/suffix
+        inference (which attributes repeated-text deletions to the
+        earliest matching position). The document is already updated
+        when the signal fires, so the full new text is observable.
+
+        Guards mirror ``_on_text_changed`` exactly:
+          - ``_loading_scene`` (P3.26): a Scene-load text swap is not
+            a user edit — never offset-shift the previous Scene's
+            blocks;
+          - ``_suppress_contents_change``: programmatic swaps whose
+            block effects were pre-applied (Replace All) must not
+            re-transform (Qt emits setPlainText as TWO edits whose
+            intermediate text breaks the pre-applied state).
+
+        After this handler runs, ``on_document_edit`` has updated the
+        manager's ``_last_text`` snapshot, so the subsequent
+        ``textChanged`` → ``on_text_changed`` diff no-ops on its
+        equality guard — the P3.44.9 contract path stays intact as
+        the fallback for any edit that somehow bypasses this feed.
+        """
+        if self._loading_scene or self._suppress_contents_change:
+            return
+        self._block_manager.on_document_edit(
+            position, removed, added, self._editor.toPlainText())
 
     def _on_cursor_moved(self) -> None:
         if self._mode != self.MODE_BLOCKS:
@@ -2589,7 +2642,19 @@ class NarrationEditor(QWidget):
             replacement=new_text,
         )
 
-        self._editor.setPlainText(new_content)
+        # P3.45.6 Phase 2: the block effects of this swap were just
+        # PRE-APPLIED per-match by on_multi_replace (which also set
+        # the manager's _last_text to new_content so the textChanged
+        # diff no-ops). Qt emits setPlainText as TWO contentsChange
+        # edits (clear-all, then insert-all) whose intermediate
+        # document text ("") no longer matches the pre-applied state —
+        # suppress the exact-position feed for the duration of the
+        # swap so the pre-applied offsets are not re-transformed.
+        self._suppress_contents_change = True
+        try:
+            self._editor.setPlainText(new_content)
+        finally:
+            self._suppress_contents_change = False
         self._search_bar.set_status(
             "Replaced {0} occurrence(s).".format(count))
 
