@@ -4746,3 +4746,42 @@ validált panel-opciókból jönnek — a realisztikus
 figyelmeztetés-forrás a párbeszédpaneli szerkesztés); a
 get_final_prompt/Engine.preview_prompt holt kód (dokumentált
 eltéréssel, nulla hívó — nyugdíjaztatás külön higiénia).
+
+VÉGSŐ VALIDÁCIÓ (a végleges fán): TELJES akku 4 darabban (62 tesztfájl,
+mind): 619 + 30 (P3.27b teljes fájl) + 639 + 548 = 1836 passed + 35
+alteszt, NULLA hiba. Az akku futása közben KÉT lelet: (1) a repóban
+KÖVETETT projects/e2315687-5f0 („Default” — az első-futás demószövegével)
+a MainWindow-vezérelt tesztek MUTÁLJÁK (előzőleg létező
+teszthigiéniai hiba; OPEN_BUGS-ba rögzítve); (2) a 3. fázis
+restaurációja a MUTÁLT „Default” projektet töltötte be friss
+beállításokkal (a P3.37 demó-teszt elbukott) — TISZTÁZÁS ÉS FINOMÍTÁS:
+a restauráció CSAK akkor élesül, ha a first_run_completed INDULÁSKOR
+már igaz volt (a zászló beállítása ELŐTT olvasva) — a valódi friss
+telepítés az EREDETI első-futás élményt tartja (demó-beszúrás +
+memóriabeli alapérték), immunis a lemezi „Default” állapotára; a
+finomítás után a 2. darab ÚJRAFUTOTT teljesen zöldel (639) a
+köztes mutációval együtt; 1. darab újrafutás 619 zöld. Validátorok:
+verify_compile 159/159; verify_architecture PASS (a két dokumentált
+kivétellel); verify_integration PASS; verify_functional_integrity
+80/80; launch smoke a VALÓDI belépési útvonalon (SpeechStudio.py
+import → QApplication → MainWindow → tiszta leállítás) OK.
+
+FRISS BUILD: releases/GUINEO_P3.45.6_current.zip a végleges validált
+commitból (3f8d724 szülő a2027fe) git archive konvencióval — a zip
+fájlhalmaza PONTOSAN a git fa mínusz releases/ (320 == 320, 0 hiányzó
+/ 0 extra; Python zipfile halmaz-egyenlőség), NINCS futásidejű maradvány
+(settings/logs/presets/__pycache__/.pyc/kimenetek/hitelesítő adatok —
+0 találat), mind az öt P3.45.6 tesztfájl + a tervezési rekord
+bennevan; keep-last-5 érvényes (P3.44.9 eltávolítva; releases/ =
+P3.45.2B, P3.45.3, P3.45.4, P3.45.5, P3.45.6). Build commit: 3f8d724.
+
+GIT/KIADÁS: implementációs commitok c79e1bf (1. fázis), 463d363
+(2. fázis), 411ac8f (3. fázis), 84db0f4 (4. fázis), 5e7d1d8 (5. fázis),
+a2027fe (3. fázis finomítás) + build commit 3f8d724; PUSH SIKERES:
+ae809ae..3f8d724 main -> main; helyi == origin/main == GitHub API ==
+3f8d724; tiszta fa (0 porcelán-sor); a commitolt zip blob SHA-256 ==
+lemezi fájl; nulla github_pat előfordulás az új commitokban. A
+felhasználó tényleges „GUINEO / Leírás” projekt fájlja NEM állt
+rendelkezésre — a korrupt állapotok szintzetikus dokumentumokon
+reprodukálódnak; a záró kézi ellenőrzőlista a tervezési rekordban. A
+P3.45.6 ITT ÁLL MEG.
