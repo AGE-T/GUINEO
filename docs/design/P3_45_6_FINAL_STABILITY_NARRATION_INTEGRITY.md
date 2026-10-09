@@ -265,3 +265,77 @@ untouched).
   by the user via the final manual checklist (or by the new gate
   itself, which will now surface any invalid range the project may
   still carry).
+
+---
+
+## Phase 3 — Project / Scene Restoration on Startup
+
+### 3.1 Root cause (source-verified)
+
+`MainWindow._connect_engine` restored only the DISPLAY names from
+settings (`current_project` / `current_scene`) into the breadcrumb,
+then constructed a PHANTOM in-memory default Project (new uuid, one
+scene holding the demo/empty editor text) — the REAL persisted project
+was never loaded from disk. The sidebar's project/scene context lists
+are built by `_update_recents()`, which ran only on navigation clicks
+and later mutations — never at startup. Result: the breadcrumb showed
+`PROJECTS > GUINEO > Leírás` while the left panel lists were empty
+until the user clicked Projects/Scenes, and the active model objects
+were a phantom project + a default scene (not the persisted scene's
+text/Blocks).
+
+### 3.2 Fix (reuse of the existing load paths; no second persistence system)
+
+`_restore_last_active_project()` runs during `_connect_engine` after
+ProjectManager/RecentsManager initialisation:
+
+- resolves the saved Project — legacy NAME schema primary (the
+  persisted settings store names); duplicate display names and stale
+  names are disambiguated/recovered through the stable Recents
+  entity_id (a real on-disk project id, most-recent first); a display
+  name is never treated as a unique id;
+- loads the REAL project through the EXISTING `_load_native_project`
+  path (first scene + editor text/Blocks/settings + sidebar scene rows
+  + breadcrumb + Character selector + Recents MRU +
+  `_update_recents()` — which populates the left-panel context list
+  and highlights the active row);
+- activates the SAVED scene through the EXISTING `_switch_to_scene`
+  path (name match, Recents-id disambiguation, first-scene fallback);
+- re-persists the selection so the stored state agrees with the actual
+  active objects;
+- returns False on first run / deleted project (no valid saved
+  selection) — the ORIGINAL honest in-memory fallback then applies
+  (unchanged), and even then the context list renders (empty is a
+  legitimate state; unrendered was the defect). Nothing is persisted
+  over existing data; no phantom reaches disk.
+
+### 3.3 Regression tests (`tests/test_p3_45_6_startup_restoration.py`)
+
+10 tests, run TWICE green — REAL MainWindow construction over a
+temporary APP_ROOT with pre-seeded settings.json and on-disk projects:
+saved project + scene restored (stable id, saved scene not first,
+editor text + Block state + label/Character restored, breadcrumb ==
+actual objects, Projects list populated with the active row
+highlighted WITHOUT any click, sidebar scene rows populated with the
+saved scene active); scene-list data complete at startup; saved-scene
+missing → first scene; first run (no projects) → honest default with a
+RENDERED (empty) list; deleted project → honest fallback with zero
+disk mutation; stale name → Recents-id recovery; duplicate names →
+stable-id disambiguation; legacy name-only settings; persisted
+selection agrees after restore; Recents MRU recorded at startup.
+
+### 3.4 Results
+
+- Focused 10/10 twice; affected suites: P3.17 + P3.21 + P3.24 + P3.26
+  + P3.16 + P3.13 + P3.9 = 202 passed; MainWindow-heavy P3.44.4 +
+  P3.45.4 + Phase 2 suite = 71 passed; `verify_compile` 157/157.
+
+### 3.5 Residual risks
+
+- The persisted schema remains NAME-based (compatibility preserved);
+  the stable-id recovery depends on Recents entries existing. A
+  renamed project with cleared Recents falls back to the honest
+  default — documented, not silently mis-restored.
+- The user's actual `GUINEO / Leírás` project was not supplied; the
+  restoration is proven on synthetic on-disk projects with the same
+  shape (see the final manual checklist).

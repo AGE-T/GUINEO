@@ -3042,3 +3042,15 @@ substitution swaps keep the frozen coarse attribution (bounded by the
 generation gate + Re-detect recovery); the user's actual saved project
 was not available — the new gate itself will surface any invalid range
 it still carries.
+
+### P3.45.6 Phase 3 — startup Project/Scene restoration defect: CLOSED
+
+The breadcrumb-vs-left-panel startup defect (phantom in-memory project
+constructed over a persisted selection; context lists populated only
+after navigation clicks) is CLOSED by `_restore_last_active_project()`
+reusing the existing `_load_native_project` / `_switch_to_scene` paths
+with stable-id disambiguation and the honest first-run/deleted-project
+fallback. Evidence: 10 real-MainWindow regressions (twice), 202
+project/scene-affected tests, 71 MainWindow-heavy tests — see the
+design record §3. The name-based persisted schema is retained
+(compatibility); stable-id recovery rides Recents entries.

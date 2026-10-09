@@ -717,10 +717,28 @@ class MainWindow(QMainWindow):
             logger.warning("P3.4: Could not init RecentsManager: %s", exc)
             self._recents_manager = RecentsManager()
 
-        # P2.1: Create a default in-memory Project if none exists yet.
-        # This ensures the authoritative model is always available even
-        # before the user explicitly creates or opens a project.
-        if self._active_project is None:
+        # P3.45.6 Phase 3 — STARTUP PROJECT/SCENE RESTORATION: load the
+        # previously active native Project (persisted selection) through
+        # the EXISTING load path so the left-panel lists are populated,
+        # the sidebar row matches the active object and the breadcrumb
+        # agrees with the actual model state WITHOUT any navigation
+        # click. Previously the startup only restored the DISPLAY names
+        # (breadcrumb showed "GUINEO > Leírás") while `_active_project`
+        # was a PHANTOM in-memory default — the real persisted project
+        # was never loaded and the sidebar lists stayed empty until the
+        # user clicked Projects/Scenes.
+        restored = False
+        if self._project_manager is not None:
+            try:
+                restored = self._restore_last_active_project()
+            except Exception as exc:
+                logger.warning(
+                    "P3.45.6: startup project restoration failed: %s", exc)
+        if not restored and self._active_project is None:
+            # First run (no valid saved selection / no projects on disk):
+            # the original in-memory default fallback — UNCHANGED
+            # behaviour, and still honest (nothing is persisted over
+            # existing data; the phantom stays in memory only).
             self._active_project = Project(name=self._current_project)
             # Add a default scene matching the current UI state.
             default_scene = Scene(
@@ -732,6 +750,14 @@ class MainWindow(QMainWindow):
             self._active_scene = default_scene
             logger.info("P2: Created default in-memory Project '%s' with scene '%s'",
                         self._active_project.name, default_scene.name)
+            # P3.45.6: populate the left-panel context list + recents even
+            # on first run so the lists are rendered (empty is a legitimate
+            # state when no projects exist — an unrendered list is not).
+            try:
+                self._update_recents()
+            except Exception as exc:
+                logger.warning("P3.45.6: first-run recents render failed: %s",
+                               exc)
 
         # The batch manager calls ``submit_fn`` (= engine.generate) and
         # ``cancel_fn`` (= engine.cancel_generation).  All callbacks are
@@ -6349,6 +6375,152 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes)
             if reply == QMessageBox.StandardButton.Yes:
                 self._import_legacy_sproj()
+
+    def _restore_last_active_project(self) -> bool:
+        """P3.45.6 Phase 3 — restore the saved Project/Scene at startup.
+
+        Returns True when a persisted native Project was actually loaded
+        (through the EXISTING ``_load_native_project`` / ``_switch_to_scene``
+        paths); False when no valid saved selection exists (first run, or
+        the persisted project was deleted) so the caller keeps the
+        original in-memory default fallback — never pretending a
+        restoration succeeded.
+
+        Resolution (stable identifier preferred over display names; the
+        persisted settings schema stores NAMES, so names remain the
+        primary key with an honest fallback):
+
+          Project:
+            1. the persisted ``current_project`` NAME matched against
+               the on-disk projects; when MULTIPLE projects share the
+               display name, the Recents entity_id (the stable project
+               id, most-recent first) disambiguates;
+            2. if the name matches nothing: the most-recent Recents
+               project whose id still exists on disk (stale-name
+               recovery);
+            3. neither → False (first run / deleted project).
+          Scene:
+            1. the persisted ``current_scene`` NAME matched within the
+               loaded project (duplicate names disambiguated by the
+               Recents scene entity_id);
+            2. else the most-recent Recents scene of that project;
+            3. else the first scene (the ``_load_native_project``
+               default).
+        """
+        pm = self._project_manager
+        if pm is None:
+            return False
+        try:
+            projects = pm.list_projects()
+        except Exception as exc:
+            logger.warning("P3.45.6: could not list projects: %s", exc)
+            return False
+        if not projects:
+            return False
+
+        saved_name = ""
+        saved_scene_name = ""
+        try:
+            _sm = self._settings_manager
+            saved_name = _sm.get("application", "current_project", "") or ""
+            saved_scene_name = _sm.get("application", "current_scene", "") or ""
+        except Exception:
+            saved_name = self._current_project or ""
+            saved_scene_name = self._current_scene or ""
+
+        # ---- resolve the Project --------------------------------------
+        project = None
+        candidates = [p for p in projects if saved_name and p.name == saved_name]
+        if len(candidates) == 1:
+            project = candidates[0]
+        elif len(candidates) > 1:
+            # Duplicate display names: prefer the STABLE id via Recents
+            # (most-recent first).
+            project = candidates[0]
+            if self._recents_manager is not None:
+                try:
+                    recents = [r.entity_id for r in
+                               self._recents_manager.get_recent_projects()]
+                except Exception:
+                    recents = []
+                for rid in recents:
+                    match = [c for c in candidates if c.id == rid]
+                    if match:
+                        project = match[0]
+                        break
+        else:
+            # No name match (deleted project / stale name): honest
+            # recovery through the stable Recents id.
+            if self._recents_manager is not None:
+                try:
+                    for r in self._recents_manager.get_recent_projects():
+                        p = pm.get_project(r.entity_id)
+                        if p is not None:
+                            project = p
+                            break
+                except Exception:
+                    project = None
+        if project is None:
+            logger.info(
+                "P3.45.6: no restorable project selection (saved name=%r, "
+                "%d project(s) on disk)", saved_name, len(projects))
+            return False
+
+        # ---- load through the EXISTING path ---------------------------
+        # (loads the first scene + sidebar + breadcrumb + characters +
+        # recents + persistence wiring — the same path a click uses.)
+        self._load_native_project(project)
+
+        # ---- restore the SAVED scene (not just the first) -------------
+        target_scene = None
+        scene_candidates = ([s for s in project.scenes
+                             if saved_scene_name and s.name == saved_scene_name])
+        if len(scene_candidates) == 1:
+            target_scene = scene_candidates[0]
+        elif len(scene_candidates) > 1:
+            target_scene = scene_candidates[0]
+            if self._recents_manager is not None:
+                try:
+                    recents = [r.entity_id for r in
+                               self._recents_manager.get_recent_scenes()
+                               if r.project_id == project.id]
+                except Exception:
+                    recents = []
+                for rid in recents:
+                    match = [c for c in scene_candidates if c.id == rid]
+                    if match:
+                        target_scene = match[0]
+                        break
+        elif self._recents_manager is not None:
+            try:
+                for r in self._recents_manager.get_recent_scenes():
+                    if r.project_id != project.id:
+                        continue
+                    s = project.get_scene(r.entity_id)
+                    if s is not None:
+                        target_scene = s
+                        break
+            except Exception:
+                target_scene = None
+        if target_scene is not None and self._active_scene is not None \
+                and target_scene.id != self._active_scene.id:
+            # Existing switch path (saves nothing harmful: the freshly
+            # loaded first scene's state is byte-identical).
+            self._switch_to_scene(target_scene.id)
+
+        # ---- make the persisted selection agree with the ACTUAL state --
+        try:
+            _sm = self._settings_manager
+            _sm.set("application", "current_project",
+                    self._active_project.name)
+            _sm.set("application", "current_scene", self._current_scene)
+        except Exception:
+            pass
+        logger.info(
+            "P3.45.6: startup restored project '%s' (id=%s) scene '%s'",
+            self._active_project.name, self._active_project.id,
+            self._current_scene)
+        return True
 
     def _load_native_project(self, project: Project) -> None:
         """Load a native Project (from ProjectManager) into the runtime.

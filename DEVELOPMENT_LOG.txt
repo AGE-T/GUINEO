@@ -4633,3 +4633,37 @@ tényleges „GUINEO / Leírás” projekt fájlja NEM állt rendelkezésre — 
 korrupt állapotok szintetikus dokumentumokon reprodukálódnak; a valódi
 projekt tartományait az új kapu maga is felszínre hozza, ha érvénytelen
 maradna.
+
+3. FÁZIS — PROJEKT/JELENET-RESTAURÁLÁS INDÍTÁSKOR: KÉSZ. Gyökérokoz:
+a _connect_engine CSAK a megjelenítési neveket állította vissza a
+/settings-ből a morzsamenübe, majd FANTOM in-memory alapprojektet épített
+(új uuid, egy jelenettel és a demó/üres szöveggel) — a VALÓDI mentett
+projekt sosem töltődött be; a bal panel kontextuslistáit kizárólag a
+navigációs kattintások futtató _update_recents() építette, ami indításkor
+sosem futott („PROJECTS > GUINEO > Leírás” morzsa üres listák mellett).
+JAVÍTÁS: _restore_last_active_project() a _connect_engine-ben a
+ProjectManager/RecentsManager inicializálás után — örökölt NÉV-séma
+(elsődleges), duplikát/nevek és elavult nevek a stabil Recents
+entity_id-vel diszkriminálódnak/állnak helyre (a megjelenítési név SOHA
+nem egyedi azonosító); a VALÓDI projekt a MEGLÉVŐ _load_native_project
+útvonalon töltődik be (első jelenet + szerkesztő + oldalsáv + morzsa +
+karakterek + recents + kontextuslista-aktív-sor kiemelés), majd a MENTETT
+jelenet a MEGLÉVŐ _switch_to_scene útvonalon aktiválódik; a mentett
+kiválasztás visszapersistálódik, hogy megegyezzen a tényleges objektumokkal.
+Első futtatás / törölt projekt → az EREDETI őszintes in-memory fallback
+(változatlan; semmi nem persistálódik meglévő adat fölé), és a
+kontextuslista akként is RENDERELŐDIK (az üres legitim állapot, a
+nem-renderelt a hiba). NINCS második perzisztencia-rendszer. TESZT:
+tests/test_p3_45_6_startup_restoration.py — 10 teszt KÉTSZER zöld, VALÓDI
+MainWindow konstrukció előre-seedelt settings.json-nel és lemezi
+projektekkel (mentett projekt+jelenet restaurálása stabil id-vel; mentett
+NE az első jelenet; szerkesztő szöveg+Blokk+címke+karakter; morzsa ==
+tényleges objektumok; projektlista kattintás NÉLKÜL kitöltve aktív sor
+kiemeléssel; jelenetsorok kitöltve; hiányzó mentett jelenet → első;
+első futtatás → őszinte alap + renderelt üres lista; törölt projekt →
+őszinte fallback null lemez-mutációval; elavult név → Recents-id helyreállítás;
+duplikát nevek → stabil-id diszkrimináció; örökölt csak-neves beállítások;
+persistált kiválasztás megegyezése; Recents MRU indításkor). Érintett
+suite-ok: P3.17+P3.21+P3.24+P3.26+P3.16+P3.13+P3.9 = 202 passed;
+MainWindow-nehéz P3.44.4+P3.45.4+P3.45.6/2.fázis = 71 passed;
+verify_compile 157/157.
