@@ -520,3 +520,48 @@ restores the persisted selection as specified. Battery chunk 2 re-run
 fully green (639) with the tracked file mutated mid-run; Phase 3 suite
 extended with the shipped-project first-run + second-run contracts
 (12/12 twice).
+
+---
+
+## Final manual verification checklist (the user's actual Project)
+
+The actual saved `GUINEO / Leírás` project file was NOT supplied in this
+task, so no claim is made about its data. The following checklist lets
+the user verify the five fixes against the real project (every item is
+backed by the automated evidence above; this closes the loop on the
+user's own data):
+
+1. Launch into `GUINEO / Leírás` — the left Project and Scene lists
+   must ALREADY be populated (no navigation click), the selected rows
+   match the active objects, and the breadcrumb agrees.
+2. Delete a large middle section of the text that contains repeated
+   phrases — the green gutter coverage rows must stay aligned with
+   their own text, no block vanishes or claims the wrong slice.
+3. Inspect the active Block ranges (Re-detect shows the model): all
+   offsets must be within the current text; if any legacy range is
+   invalid, Generate Long now STOPS with the exact diagnostics and the
+   Re-detect recovery guidance instead of generating duplicated text.
+4. Run Generate Long — no deleted fragment may appear in any new Batch
+   Part; each Part's text must be a slice of the CURRENT document.
+5. Check the Preview (center tab) and each Part's compiled prompt:
+   with Allow SFX OFF no `<|sfx:...|>` token may appear in EITHER
+   surface; the Preview equals the prompt Generate would send.
+6. Inspect the green coverage indicator and the yellow override-count
+   badge in the gutter: they must never overlap or compress the Block
+   label (narrow windows included).
+7. Press Stop during a running Batch: a job stopped before its worker
+   started must show as Stopped (SKIPPED, "Stopped by user."), never
+   as a red FAILED row with an empty error.
+8. After editing Part text in the Long dialog, any compile warning
+   (e.g. a rejected value) is surfaced in a warning box before the
+   batch starts.
+
+## Programme result summary
+
+Five phases implemented, each with deterministic regressions (key
+tests stash-proven red pre-fix), frozen contracts re-validated, the
+full battery green (1836 passed + 35 subtests, 0 failures), all
+validators + launch smoke green, a fresh verified release artifact
+(`releases/GUINEO_P3.45.6_current.zip`, 320 files == git tree minus
+releases/), separate build commit, and a successful push
+(`origin/main` == local HEAD). STOP after P3.45.6 as mandated.
