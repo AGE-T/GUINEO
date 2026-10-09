@@ -4667,3 +4667,33 @@ persistált kiválasztás megegyezése; Recents MRU indításkor). Érintett
 suite-ok: P3.17+P3.21+P3.24+P3.26+P3.16+P3.13+P3.9 = 202 passed;
 MainWindow-nehéz P3.44.4+P3.45.4+P3.45.6/2.fázis = 71 passed;
 verify_compile 157/157.
+
+4. FÁZIS — GUTTER STÁTUSZELRENDEZÉS: KÉSZ. Gyökérokoz: mindhárom
+fejlécelem UGYANAZT a jobb-felső sarkot célozta — a Blokk-címke rögzített
+gw-30-ra csonkolt balra igazítva; a generálási státuszszöveg jobbra
+gw-6-ig; a felülíró-számláló pirula (töltött borostyán kerekített téglalap,
+18×14) a [gw-24, gw-6] sávban, a státusz UTÁN rajzolva — felülírók jelenlétében
+a pirula RÁFESTETT a státuszszövegre, szűk szélességeknél mindhárom a
+címkébe sűrűsödött. JAVÍTÁS: _BlockGutterWidget._header_layout — TISZTA,
+tesztelhető elrendezési szerződés, jobbról balra diszjunkt zónákra osztva
+a fejlécsort: [címke (maradékra csonkolva) | rés | státusz (kompakt
+létra, szélesség-korlátos) | rés | pirula (VÁLTOZATLAN P3.15 hely)]. A
+státusz a pirulától BALRA áll meg, és a létra leginformatívabb, még
+beférő jelöltjét választja (teljes P3.45.1 címke → állam-szimbólum);
+extrém szűk szélességnél a státusz elhagyása a dokumentált tartalék. A
+P3.44.9.1 SORGEOMETRIA ÉRINTETLEN (csak a fejlécsor vízszintes particionálása
+változott); a P3.45.1 státusz-szemantika, a felülíró-számlálás, a téma-paletta
+és a kijelölési/figyelmeztető színek változatlanok. TESZT:
+tests/test_p3_45_6_gutter_layout.py — 11 teszt KÉTSZER zöld, tiszta
+exit (teljes szélesség×pirula×állapot mátrix diszjunkció+fértőzárási
+ellenőrzése; a pirula helye; termékszélességen a TELJESE címkék; az
+állapotok megkülönböztethetősége; a létra kecses degradációja; A
+regresszió — a státusz jobb széle a pirulától balra; VALÓDI widget-
+renderelések explicit QPainter+render úton (NEM grab() — az offscreen
+platform második backing-store grabja exit-kor szegmentálási hibát okoz,
+ellenőrizve) a termékszélességen és szűken; a P3.44.9.1 soros szerződés
+újramerősítve). Fagyasztott szerződések újravalidálva: P3.44.9.1+P3.45.1+
+P3.45.4+P3.44.7+P3.45.6/2.fázis = 142 passed. Harris-óra: a
+nem-csomagolt staticmethod visszaállítása példány-metódussá teszi a
+függvényt (self+6 argumentum) → festés közbeni kivétel → aktív painter →
+exit-kori szegmentálási hiba — rögzítve a tesztfájlban.

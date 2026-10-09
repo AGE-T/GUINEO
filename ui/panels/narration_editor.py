@@ -183,6 +183,99 @@ class _BlockGutterWidget(QWidget):
                 rows[i - 1][2] = max(prev_row[1], cur_row[1] - 1)
         return [tuple(r) if r is not None else None for r in rows]
 
+    # P3.45.6 Phase 4 — the non-overlapping gutter header layout
+    # contract (pure function; shared by the painter and the tests):
+    #
+    #   [ label (elided) | gap | status (compact ladder) | gap | pill ]
+    #
+    # The header line hosts up to three elements that previously
+    # collided in the same top-right corner: the Block label
+    # (left-aligned, elided to a FIXED gw-30), the generation status
+    # text (right-aligned to gw-6) and the override count pill (a
+    # filled rounded rect at [gw-24, gw-6]) — with overrides present
+    # the pill painted OVER the status text, and at narrow widths all
+    # three compressed into each other. The zones are computed
+    # right-to-left ONCE per row: the pill keeps its established
+    # position (P3.15); the status stops LEFT of the pill and picks
+    # the most informative candidate of its compact ladder that fits
+    # the remaining budget; the label is elided to whatever remains.
+    # ROW GEOMETRY (P3.44.9.1 _block_rows) is untouched — this only
+    # partitions the header line horizontally.
+    HEADER_RIGHT_PAD = 6
+    HEADER_PILL_W = 18
+    HEADER_PILL_H = 14
+    HEADER_PILL_GAP = 8
+    HEADER_LABEL_LEFT = 8
+    HEADER_LINE_TOP = 2
+    HEADER_LINE_H = 16
+    HEADER_MIN_LABEL_W = 24
+
+    @staticmethod
+    def _header_layout(gw, gy, has_overrides, status_candidates,
+                       measure, elide):
+        """Compute the NON-OVERLAPPING header zones for one gutter row.
+
+        Args:
+            gw: the gutter width in pixels.
+            gy: the row's top y (absolute in gutter coordinates).
+            has_overrides: whether the override count pill is present.
+            status_candidates: the status text ladder, ordered from the
+                most informative to the most compact representation
+                (e.g. ["✓ 2/2", "✓"]); empty = no status element.
+            measure: callable(text) -> pixel width (QFontMetrics-
+                backed in production; deterministic in tests).
+            elide: callable(text, budget) -> elided text.
+
+        Returns (label_rect, status_rect, pill_rect, status_text):
+        pairwise-disjoint QRects (None for absent elements) plus the
+        EFFECTIVE status text ("" when the gutter is too narrow to
+        render any state — the documented extreme-narrow fallback).
+        """
+        right_edge = gw - _BlockGutterWidget.HEADER_RIGHT_PAD
+        pill_rect = None
+        if has_overrides:
+            pill_rect = QRect(
+                right_edge - _BlockGutterWidget.HEADER_PILL_W,
+                gy + 3,
+                _BlockGutterWidget.HEADER_PILL_W,
+                _BlockGutterWidget.HEADER_PILL_H)
+            right_edge = (right_edge - _BlockGutterWidget.HEADER_PILL_W
+                          - _BlockGutterWidget.HEADER_PILL_GAP)
+
+        status_rect = None
+        status_text = ""
+        if status_candidates:
+            budget = max(0, right_edge - _BlockGutterWidget.HEADER_LABEL_LEFT
+                         - _BlockGutterWidget.HEADER_MIN_LABEL_W)
+            chosen = None
+            for cand in status_candidates:
+                if measure(cand) <= budget:
+                    chosen = cand
+                    break
+            if chosen is None:
+                chosen = status_candidates[-1]
+            if measure(chosen) > budget:
+                if budget >= 8:
+                    chosen = elide(chosen, budget)
+                else:
+                    chosen = ""
+            status_text = chosen
+            if status_text:
+                w = measure(status_text)
+                status_rect = QRect(
+                    right_edge - w, gy + _BlockGutterWidget.HEADER_LINE_TOP,
+                    w, _BlockGutterWidget.HEADER_LINE_H)
+
+        if status_rect is not None:
+            label_right = status_rect.left() - 4
+        else:
+            label_right = right_edge
+        label_w = max(0, label_right - _BlockGutterWidget.HEADER_LABEL_LEFT)
+        label_rect = QRect(_BlockGutterWidget.HEADER_LABEL_LEFT,
+                           gy + _BlockGutterWidget.HEADER_LINE_TOP,
+                           label_w, _BlockGutterWidget.HEADER_LINE_H)
+        return label_rect, status_rect, pill_rect, status_text
+
     def paintEvent(self, event) -> None:
         editor = self._editor
         blocks = editor._blocks
@@ -286,6 +379,56 @@ class _BlockGutterWidget(QWidget):
             gx = 8  # P3.15: consistent left padding (was 6)
             gy = y_top
 
+            # P3.45.6 Phase 4 — build the status text LADDER (most
+            # informative → most compact) with the P3.45.1 semantics
+            # UNCHANGED (multi-part blocks present their slot coverage;
+            # single-part keep the classic labels; error/queued keep the
+            # existing taxonomy), then partition the header line into
+            # non-overlapping zones (see _header_layout).
+            status = getattr(block, "status", None)
+            status_candidates = []
+            status_color = Palette.TEXT_SECONDARY
+            if status:
+                status_colors = {
+                    "done": (Palette.SUCCESS, "\u2713 Done"),
+                    "generating": (Palette.ACCENT, "\u2699 Gen..."),
+                    "pending": (Palette.TEXT_DISABLED, "\u23f3 Queued"),
+                    "error": (Palette.ERROR, "\u26a0 Error"),
+                }
+                status_color, base_label = status_colors.get(
+                    status, (Palette.TEXT_SECONDARY, status))
+                # P3.45.1: multi-part blocks present their slot coverage
+                # ("✓ 2/2", "⚙ 1/2") instead of the generic label. The
+                # per-block part count is DERIVED (block_slot_states over
+                # the Scene's expected slots — pushed here via
+                # update_block_status), not a new data model. Single-part
+                # blocks keep the classic labels; error/queued keep the
+                # existing taxonomy.
+                parts_total = int(getattr(block, "parts_total", 0) or 0)
+                if parts_total > 1:
+                    parts_done = int(getattr(block, "parts_done", 0) or 0)
+                    coverage = "{0}/{1}".format(parts_done, parts_total)
+                    if status == "done":
+                        base_label = "\u2713 {0}".format(coverage)
+                    elif status == "generating":
+                        base_label = "\u2699 {0}".format(coverage)
+                # P3.45.6: the compact tail of the ladder is the state
+                # SYMBOL alone (colour + glyph keep the state
+                # distinguishable when the full label does not fit).
+                symbol = base_label[:1] if base_label else ""
+                status_candidates = [base_label] + (
+                    [symbol] if symbol and symbol != base_label else [])
+
+            status_font = QFont("Segoe UI", 8)
+            status_font.setBold(True)
+            fm_status = QFontMetrics(status_font)
+            label_rect, status_rect, pill_rect, status_text = \
+                self._header_layout(
+                    gw, gy, has_overrides, status_candidates,
+                    fm_status.horizontalAdvance,
+                    lambda text, budget: fm_status.elidedText(
+                        text, Qt.TextElideMode.ElideRight, budget))
+
             # Block number (always shown) — P3.15: clear, bold
             num_font = QFont("Segoe UI", 9)
             num_font.setBold(True)
@@ -310,53 +453,25 @@ class _BlockGutterWidget(QWidget):
                 # P3.23 (design record §25): warning marker for a lost
                 # Character assignment (Re-detect ambiguity / deletion).
                 header_text = "B{0} \u26a0".format(i + 1)
-            # P3.15: leave room for override badge on the right (gw - 30)
+            # P3.45.6 Phase 4: elide to the label ZONE (whatever remains
+            # left of the status/pill zones — never a fixed guess).
             fm = QFontMetrics(num_font)
             header_text = fm.elidedText(
-                header_text, Qt.TextElideMode.ElideRight, gw - 30)
+                header_text, Qt.TextElideMode.ElideRight,
+                label_rect.width())
             painter.drawText(
-                QRect(gx, gy + 2, gw - 30, 16),
+                label_rect,
                 Qt.Alignment.AlignLeft | Qt.Alignment.AlignTop,
                 header_text)
 
             # Block status badge (HTML reference: Done/Generating/Pending/Error)
-            status = getattr(block, "status", None)
-            if status:
-                status_font = QFont("Segoe UI", 8)
-                status_font.setBold(True)
+            if status and status_text and status_rect is not None:
                 painter.setFont(status_font)
-
-                status_colors = {
-                    "done": (Palette.SUCCESS, "\u2713 Done"),
-                    "generating": (Palette.ACCENT, "\u2699 Gen..."),
-                    "pending": (Palette.TEXT_DISABLED, "\u23f3 Queued"),
-                    "error": (Palette.ERROR, "\u26a0 Error"),
-                }
-                color, label = status_colors.get(status,
-                                                  (Palette.TEXT_SECONDARY, status))
-                # P3.45.1: multi-part blocks present their slot coverage
-                # ("✓ 2/2", "⚙ 1/2") instead of the generic label. The
-                # per-block part count is DERIVED (block_slot_states over
-                # the Scene's expected slots — pushed here via
-                # update_block_status), not a new data model. Single-part
-                # blocks keep the classic labels; error/queued keep the
-                # existing taxonomy. Same font, same draw rectangle — the
-                # P3.44.9.1 gutter geometry is untouched, only the text.
-                parts_total = int(getattr(block, "parts_total", 0) or 0)
-                if parts_total > 1:
-                    parts_done = int(getattr(block, "parts_done", 0) or 0)
-                    coverage = "{0}/{1}".format(parts_done, parts_total)
-                    if status == "done":
-                        label = "\u2713 {0}".format(coverage)
-                    elif status == "generating":
-                        label = "\u2699 {0}".format(coverage)
-                painter.setPen(QColor(color))
-
-                # Draw status badge at top-right of block
+                painter.setPen(QColor(status_color))
                 painter.drawText(
-                    QRect(gx, gy + 2, gw - 6, 16),
+                    status_rect,
                     Qt.Alignment.AlignRight | Qt.Alignment.AlignTop,
-                    label)
+                    status_text)
 
                 # If generating, draw a subtle progress indicator
                 if status == "generating":
@@ -432,20 +547,18 @@ class _BlockGutterWidget(QWidget):
                 count = sum(1 for v in (block.emotion, block.style,
                                         block.speed, block.pitch,
                                         block.delivery) if v is not None)
-                # P3.15: Badge at top-right, below the block number line
-                badge_x = gw - 24
-                badge_y = gy + 3
-                badge_w = 18
-                badge_h = 14
+                # P3.45.6 Phase 4: the pill keeps its ESTABLISHED spot
+                # ([gw-24, gw-6] — P3.15); the layout contract above
+                # guarantees the status text and the label can never
+                # reach it (the pill rect comes from _header_layout).
                 painter.setBrush(QBrush(QColor(Palette.WARNING)))
                 painter.setPen(Qt.PenStyle.NoPen)
-                badge_rect = QRect(badge_x, badge_y, badge_w, badge_h)
-                painter.drawRoundedRect(badge_rect, 4, 4)
+                painter.drawRoundedRect(pill_rect, 4, 4)
                 painter.setPen(QColor(Palette.BG_BASE))
                 badge_font = QFont("Segoe UI", 7)
                 badge_font.setBold(True)
                 painter.setFont(badge_font)
-                painter.drawText(badge_rect, Qt.Alignment.AlignCenter, str(count))
+                painter.drawText(pill_rect, Qt.Alignment.AlignCenter, str(count))
 
             # Flash overlay
             if block.id in editor._flash_ids and editor._flash_alpha > 0:

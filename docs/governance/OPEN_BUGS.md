@@ -3054,3 +3054,14 @@ fallback. Evidence: 10 real-MainWindow regressions (twice), 202
 project/scene-affected tests, 71 MainWindow-heavy tests — see the
 design record §3. The name-based persisted schema is retained
 (compatibility); stable-id recovery rides Recents entries.
+
+### P3.45.6 Phase 4 — gutter status/override overlap: CLOSED
+
+The green coverage indicator and yellow override pill collided in the
+gutter header's top-right corner (pill painted over the status text;
+all three elements compressed the label at narrow widths). CLOSED by
+the `_header_layout` non-overlapping zone contract (pill spot
+unchanged; status ladder stops left of the pill; label elided to the
+remainder; P3.44.9.1 row geometry untouched). Evidence: 11 layout+
+real-render regressions (twice, clean exit), 142 frozen-contract tests
+re-validated — design record §4.

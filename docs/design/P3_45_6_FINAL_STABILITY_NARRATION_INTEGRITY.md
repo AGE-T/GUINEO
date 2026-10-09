@@ -339,3 +339,74 @@ selection agrees after restore; Recents MRU recorded at startup.
 - The user's actual `GUINEO / Leírás` project was not supplied; the
   restoration is proven on synthetic on-disk projects with the same
   shape (see the final manual checklist).
+
+---
+
+## Phase 4 — Gutter Status Layout
+
+### 4.1 Root cause (source-verified)
+
+All three gutter header elements targeted the same top-right corner:
+the Block label was left-aligned elided to a FIXED `gw - 30`; the
+generation status text (green coverage "✓ 2/2" / "⚙ 1/2" / classic
+labels) was right-aligned into `[..., gw-6]`; the override-count pill
+(a filled amber rounded rect, 18×14) occupies `[gw-24, gw-6]` and is
+drawn AFTER the status — with overrides present the pill PAINTED OVER
+the status text, and at narrow widths all three compressed into the
+Block label.
+
+### 4.2 Fix (a pure, testable layout contract)
+
+`_BlockGutterWidget._header_layout(gw, gy, has_overrides,
+status_candidates, measure, elide)` partitions the header line
+right-to-left into pairwise-disjoint zones:
+
+    [ label (elided to the remainder) | gap | status (compact ladder,
+      width-capped) | gap | override pill (UNCHANGED P3.15 spot
+      [gw-24, gw-6]) ]
+
+- The pill keeps its established position (P3.15 geometry).
+- The status stops LEFT of the pill (8px gap) and picks the most
+  informative candidate of its compact ladder that fits the remaining
+  budget (full P3.45.1 label → state symbol); at extreme narrow
+  widths the status is omitted (documented fallback — colour+glyph
+  carry the state whenever anything fits).
+- The label is elided to whatever remains (no fixed guess — MORE room
+  than before when status/pill are absent).
+- P3.44.9.1 ROW GEOMETRY untouched (only the header line's horizontal
+  partition changed); viewport/document coordinates, scroll sync,
+  P3.45.1 status semantics, override counting, theme palette,
+  selection and warning colours all unchanged.
+
+### 4.3 Regression tests (`tests/test_p3_45_6_gutter_layout.py`)
+
+11 tests, run TWICE green (exit 0, no warnings): the full
+width × override × state matrix (172/140/120/100/80/60 × pill ×
+{no status, ✓ 2/2, ⚙ 1/2, queued, error, single-part ✓}) asserts
+pairwise disjointness + gutter containment; pill keeps its spot
+(QRect.right convention documented); product width shows FULL labels;
+states stay distinguishable (4 distinct texts at 172/120/100); the
+ladder degrades gracefully; THE regression (status right edge stops
+left of the pill); real-widget renders (explicit QPainter + render —
+NOT grab(), whose second offscreen backing-store grab segfaults at
+exit — verified) spy the layout during actual paints at the product
+width and a narrow width; the P3.44.9.1 row contract (monotonic,
+minimum-height rows) re-asserted on the real gutter.
+
+### 4.4 Results
+
+- Focused 11/11 twice (clean exit); frozen contracts re-validated:
+  P3.44.9.1 + P3.45.1 + P3.45.4 + P3.44.7 + Phase 2 suite = 142
+  passed.
+- `verify_compile` on the changed tree: green (157/157 at the Phase 3
+  run; re-run in the final battery).
+
+### 4.5 Residual risks
+
+- At extreme narrow gutters (< ~100px with a pill) the status may
+  degrade to its symbol or be omitted entirely — documented ladder
+  fallback; the product gutter is a fixed 172px where all full labels
+  render.
+- The harness lesson (restoring an unwrapped staticmethod turns it
+  into a bound method → mid-paint exception → active painter →
+  segfault) is recorded in the test file for future harness authors.
