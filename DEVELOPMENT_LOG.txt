@@ -4522,3 +4522,52 @@ szakasz); OPEN_BUGS.md P3.45.5 szakasz (öt CLOSED javítás + SS-7 ÚJ
 OPEN lelet + reziduumok; SS-3/SS-4 státusz-javítás; SEMMI bejegyzés
 nem lett törölve — a BUG-001/P3.45-GATE státuszok JAVÍTÁSOK,
 törlések nem). A P3.45.5 ITT ÁLL MEG.
+
+P3.45.6 — VÉGSŐ STABILITÁS ÉS NARRÁCIÓS INTEGRITÁS LEZÁRÁS (öt fázisú,
+rendezett záróprogram). Bázis: main @ ae809ae (origin/main-mal egyenlő,
+tiszta fa; releases/: P3.44.9…P3.45.5 öt zip, keep-last-5 érvényes).
+
+1. FÁZIS — SS-7 ELŐ-INDÍTÁSI TÖRLÉSI VERSENYHELYZET: ZÁRVA.
+Gyökérokoz (forrás- és futásidejűleg igazolva): a
+concurrent.futures.CancelledError SAJÁT osztály (MRO: CancelledError →
+Error → Exception), str()-je ÜRES; a _on_job_done általános „except
+Exception” ága error=""-t állított be, az „if error is not None” pedig
+a felhasználói stopot FAILED-ként (üres hibaüzenettel) osztályozta,
+MIELŐTT a stop-szemantikai ág futhatott volna. A versenyablak: a job
+GENERATING + a feladat a végrehajtón MÉG nem indult (küldés→indítás
+közti ablak); Stop → stop() SKIPPED-re fordítja a tagot és cancel_fn-t
+hív → Future.cancel() SIKERÜL → a future CANCELLED-ként készül el →
+a callback CancelledError-t kap. Javítás (legkisebb biztonságos
+termékváltozás, CSAK engine/batch_manager.py::_on_job_done):
+explicit CancelledError-elkapás; pre_start_cancel = future.cancelled()
+(CSAK a CANCELLED future-ÁLLAPOT hiteles — a hívható sosem futott,
+tehát sosem valódi modelfutás-hiba); osztályozás a záralatt olvasott
+hiteles stop-jelekkel: was_stopped VAGY _stop_requested → SKIPPED
+„Stopped by user.” (a dokumentált §14/P3.30(d) szerződés); stop-jel
+NELKÜLI törlés (idegen cancel: engine-leállítás, egyedi generálás
+Stopja) → FAILED explicit „Generation was cancelled before it
+started.” üzenettel (soha nem vak SKIPPED-re fordítás, soha nem néma
+üres-hiba sor). Valódi worker-kivétel → FAILED (változatlan);
+kooperatív futás közbeni stop → SKIPPED (változatlan); a befejezéssel
+versenyző stop → COMPLETED-visszaállítás (változatlan). A stop()
+kiválasztási/run-hatókör/újrapróbálkozási szemantika ÉRINTETLEN.
+
+TESZT: tests/test_p3_45_6_ss7_stop_race.py — 9 determinisztikus
+teszt (vak alvás nélkül; kötött feltételes várakozások; a
+sebezhető állapot MEGKONSTRUÁLVA): egység-szint valódi Future-eken
+(scripted pool, a WorkerPool.cancel_generation szemantikájával,
+beleértve a már-futott állapotot, ahol cancel() False); VALÓDI
+ThreadPoolExecutor integráció (Event-záró blokkoló tartja az egyetlen
+worker szálát → a generálási feladat BIZONYÍTOTTAN sorban áll, amikor
+a Stop érkezik — a teljes valódi cancel → CANCELLED →
+CancelledError → callback lánc fut végig). Hét szerződéses forgatóköny
++a verseny-ismétlés. BIZONYÍTÉK: a két kulcsteszt a javítás ELŐTTI fán
+ELBUKIK (git stash ellenőrzés), utána zöld. Fókusz 9/9 KÉTSZER;
+20 iterációs versenyismétlés 2 CPU-égető szál terhe mellett — mind
+SKIPPED, a feladat sosem indult el. Érintett történelmi suite-ok:
+P3.44.4+P3.44.1+P3.44.5+P3.30+P3.35+P3.41 = 150 passed; fagyaszott
+stop/batch szerződések: P3.45.5+P3.45.3+P3.44.6+P3.28 = 176 passed.
+OPEN_BUGS SS-7 → CLOSED (gyökérokoz+javítás+záró bizonyíték);
+P3.45.5-reziduum (két stop-teszt elméleti SS-7-mintavétele) →
+MEGSZÜNT a javítással. Tervezési rekord:
+docs/design/P3_45_6_FINAL_STABILITY_NARRATION_INTEGRITY.md (1. fázis).

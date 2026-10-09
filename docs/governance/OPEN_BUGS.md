@@ -2913,9 +2913,9 @@ at `418b9ed` with code evidence before this round). Fixed:
 
 ### SS-7 (NEW, discovered by the P3.45.5 stabilisation work) — pre-start cancel race renders a stopped job FAILED
 
-- **Status**: **OPEN** (product defect, PROVEN by logs; deliberately
-  NOT fixed in P3.45.5 — this round's scope is strictly
-  no-product-behaviour-change)
+- **Status**: **CLOSED** (P3.45.6 Phase 1 — root cause verified by
+  source inspection AND runtime semantics, fix applied, deterministic
+  regression tests proven to fail on the pre-fix tree and pass after)
 - **Severity**: Medium (user-visible: a legitimately stopped job shows
   a red FAILED row with an empty error instead of Stopped)
 - **Evidence**: 3/30 reproductions of the regen-stop test at the
@@ -2935,13 +2935,38 @@ at `418b9ed` with code evidence before this round). Fixed:
 - **User-reachable**: Stop pressed within the submit-to-start window
   of any batch job (or the single-generation Stop at
   `main_window.py:2516`, same window).
-- **Fix direction** (for its own task): in `_on_job_done`'s exception
-  path, check `future.cancelled()` (and/or `was_stopped`) →
-  `SKIPPED` / "Stopped by user." instead of FAILED. Three lines; must
-  be validated against the full P3.44.4 suite.
-- **Disposition**: deferred to the next implementation round — fixing
-  it is a product behaviour change in the frozen P3.44.4 stop zone and
-  requires its own evidence-first task per the house discipline.
+- **Root cause (P3.45.6, source + runtime verified)**:
+  `concurrent.futures.CancelledError` derives from Exception (MRO:
+  CancelledError → Error → Exception) with an EMPTY `str()`, so
+  `_on_job_done`'s generic `except Exception` set `error = ""` —
+  `if error is not None` then classified the user stop as FAILED with
+  an empty error before the stop-semantics branch could run.
+- **Fix (P3.45.6 Phase 1)**: `_on_job_done` catches
+  `concurrent.futures.CancelledError` explicitly and trusts only the
+  CANCELLED future STATE (`future.cancelled()` — the task never ran,
+  so it can never be a genuine model/runtime failure). Classification
+  uses the AUTHORITATIVE stop semantics read under the manager lock:
+  `job.status == SKIPPED` (stop() flipped this run's GENERATING member
+  before calling cancel_fn) or `_stop_requested` → SKIPPED
+  "Stopped by user." (the documented user-stop contract). A cancelled
+  future WITHOUT a stop signal (foreign cancellation — engine
+  shutdown / a cancel from outside this run's stop) stays FAILED with
+  the explicit message "Generation was cancelled before it started."
+  — never a silent empty-error row, never blanket-translated to
+  SKIPPED. Genuine worker exceptions, cooperative in-flight cancels
+  and the stop-racing-completion COMPLETED restore are unchanged.
+- **Closure evidence**: `tests/test_p3_45_6_ss7_stop_race.py` — 9
+  tests covering the exact vulnerable state (scripted real-Future
+  unit level + a REAL ThreadPoolExecutor scenario where the generation
+  task is provably QUEUED when Stop lands) plus the seven contract
+  scenarios (pre-start stop; external cancel without stop; in-flight
+  cooperative cancel; genuine error; idle Stop; §14 selective-run
+  member/non-member; callback idempotency; completion racing Stop).
+  Both key tests FAIL on the pre-fix tree (stash-verified) and pass
+  after; 20-iteration repetition under 2-CPU burner contention green;
+  focused suite 9/9 twice; affected historical suites green
+  (P3.44.4/1/5, P3.30, P3.35, P3.41: 150 passed; P3.45.5/3,
+  P3.44.6, P3.28: 176 passed).
 
 ### Residuals (recorded; each needs its own decision before any change)
 
@@ -2950,7 +2975,9 @@ at `418b9ed` with code evidence before this round). Fixed:
   stop tests (`test_stop_selective_run_leaves_non_member_untouched`,
   `test_stop_whole_queue_run_flips_all_pending`) still use
   `wait_status(GENERATING)` alone and can theoretically sample it —
-  the flake there is bounded by the same SS-7 fix.
+  RESOLVED by the P3.45.6 Phase 1 SS-7 fix itself (a pre-start
+  cancellation in those tests now renders SKIPPED by the same
+  classification; P3.44.4 suite green after the fix).
 - The second `_process(400)` in
   `test_late_completion_callback_has_no_effect` is a Qt-event-queue
   DRAIN after an injected stale callback (no engine-state condition
@@ -2964,7 +2991,24 @@ at `418b9ed` with code evidence before this round). Fixed:
 - P3.27B-E1 (SSH06 modal poisoning) and SS-6 (GL-shim hard-coded
   path) remain OPEN as before (environment/test-infrastructure).
 
-No backlog items were removed in this round (BUG-001 and P3.45-GATE
-were status CORRECTIONS, not deletions; SS-3, SS-4 and the
-`verify_integration` false-red are closed as FIXED by this round's
+No backlog items were removed in the P3.45.5 round (BUG-001 and
+P3.45-GATE were status CORRECTIONS, not deletions; SS-3, SS-4 and the
+`verify_integration` false-red are closed as FIXED by that round's
 changes with their register sections above documenting the evidence).
+
+## P3.45.6 round — final stability and narration integrity closure
+
+Five-phase closure programme (SS-7 stop race; Narration Block range
+integrity; startup Project/Scene restoration; gutter status layout;
+Preview/token consistency). Phase sections below record per-phase
+defect evidence and dispositions; entries are APPENDED, never
+rewritten — historical evidence above is retained.
+
+### P3.45.6 Phase 1 — SS-7 pre-start cancel race: CLOSED
+
+See the SS-7 section above (status corrected to CLOSED with the
+P3.45.6 root cause, fix and closure evidence). Production change is
+confined to `engine/batch_manager.py::_on_job_done` (explicit
+`concurrent.futures.CancelledError` classification through the
+authoritative under-lock stop semantics); stop()/selection/retry/
+queue semantics untouched; P3.44.4 §14 contract re-validated green.

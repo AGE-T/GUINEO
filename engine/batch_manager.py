@@ -28,6 +28,7 @@ AI Development Rules section 11:
 """
 
 from __future__ import annotations
+import concurrent.futures
 import enum
 import threading
 import time
@@ -1082,10 +1083,30 @@ class BatchManager:
         # Capture the result before marshalling.
         result: Optional[GenerationResult] = None
         error: Optional[str] = None
+        # SS-7 (P3.45.6): a PRE-START cancellation — Stop landed in the
+        # submit-to-start window, ``Future.cancel()`` succeeded and the
+        # future completed CANCELLED, so ``future.result()`` raises
+        # ``concurrent.futures.CancelledError``. That exception derives
+        # from Exception with an EMPTY ``str()``, so the generic handler
+        # below used to classify a legitimate user stop as FAILED with
+        # an empty error (3/30 reproductions, P3.45.5). Catch it
+        # explicitly: the generation callable NEVER RAN in this state
+        # (no pipeline stage, no model call), so it can never be a
+        # genuine model/runtime failure — the stop-semantics check under
+        # the lock below decides SKIPPED vs. unexpected external cancel.
+        pre_start_cancel = False
         try:
             result = future.result()
             logger.info("_on_job_done: future.result() success=%s",
                         result.success if result else "None")
+        except concurrent.futures.CancelledError:
+            # Only trust the CANCELLED *future state* (the task never
+            # started). A CancelledError raised by the callable itself
+            # (future FINISHED with exception) keeps the generic path.
+            pre_start_cancel = future.cancelled()
+            logger.info("_on_job_done: future CANCELLED before worker "
+                        "start (pre-start cancel, state_cancelled=%s)",
+                        pre_start_cancel)
         except Exception as exc:
             error = str(exc)
             logger.error("_on_job_done: future.result() raised: %s", exc)
@@ -1144,7 +1165,26 @@ class BatchManager:
             was_stopped = job.status == JobStatus.SKIPPED
             result_cancelled = bool(getattr(result, "cancelled", False)) \
                 if result is not None else False
-            if error is not None:
+            if pre_start_cancel:
+                # SS-7 (P3.45.6): authoritative stop semantics — stop()
+                # flips THIS run's GENERATING members to SKIPPED and sets
+                # ``_stop_requested`` under the SAME lock BEFORE calling
+                # cancel_fn(), so a cancellation observed here together
+                # with either signal is a USER STOP of this run: render
+                # the documented SKIPPED contract, never a red FAILED.
+                # Without either signal the future was cancelled by
+                # something outside this run's stop (single-generation
+                # Stop / engine shutdown): keep it a visible non-success
+                # with an explicit message — never a silent empty-error
+                # FAILED row, and never hidden as a user stop either.
+                if was_stopped or self._stop_requested:
+                    job.status = JobStatus.SKIPPED
+                    job.error = "Stopped by user."
+                else:
+                    job.status = JobStatus.FAILED
+                    job.error = ("Generation was cancelled before it "
+                                 "started.")
+            elif error is not None:
                 job.status = JobStatus.FAILED
                 job.error = error
             elif result is None or not result.success:
