@@ -3216,6 +3216,12 @@ class MainWindow(QMainWindow):
         dialog.regen_requested.connect(self._on_batch_regen)
         dialog.generate_selected_requested.connect(self._on_generate_selected)
         dialog.export_audio_requested.connect(self._on_batch_export_audio)
+        # P3.45.6 addendum: queue repair for expected parts with neither
+        # audio nor a queue row (scene mode only — the button does not
+        # exist in manual mode, so the connection is harmless there).
+        if hasattr(dialog, "readd_missing_requested"):
+            dialog.readd_missing_requested.connect(
+                self._on_readd_missing_parts)
         # Completion callback: the manager has a SINGLE slot — it is set
         # here (never duplicated per handler), scoped to the workflow.
         bm = self._batch_manager
@@ -3573,129 +3579,16 @@ class MainWindow(QMainWindow):
 
             # Add jobs — each BatchJob may have a different voice_id if the
             # part has a speaker mapped in speaker_voice_map.
+            # P3.45.6 addendum: the per-part BatchJob construction lives in
+            # _build_long_part_job — the ONE shared builder for Generate
+            # Long and Re-add Missing (identical voice precedence,
+            # versioning, naming and provenance; extracted verbatim).
             for i, part in enumerate(parts):
-                job_params = GenerationParameters(
-                    temperature=base_params.temperature,
-                    top_p=base_params.top_p,
-                    top_k=base_params.top_k,
-                    max_new_tokens=base_params.max_new_tokens,
-                    seed=base_params.seed,
-                    append_silence=0.5,
-                    normalize_output=base_params.normalize_output,
-                    auto_play=False,
-                    output_format=base_params.output_format,
-                    # P3.25 (audit SS-M02): forward the Allow SFX policy —
-                    # the copy previously omitted the flag, so Generate
-                    # Long parts always re-emitted SFX tokens even when the
-                    # user had suppressed them.
-                    allow_sfx=base_params.allow_sfx,
-                )
-                # Resolve the voice_id for this part.
-                # P3.23 Voice Precedence (design record §19/§23 — Character
-                # is authoritative when assigned to the block; the legacy
-                # speaker map may NOT override an explicit Character):
-                #   1. Block Character (part.character_id → character.voice_profile_id)
-                #   2. Speaker Voice Map (speaker_voice_map.get(speaker)) —
-                #      only consulted when the Character resolved NO voice
-                #   3. Control Panel dropdown (default_voice_id)
-                part_voice_id = default_voice_id
-                part_name = "Part {0}".format(i + 1)
-                part_speaker = getattr(part, "speaker", "") or None
-                part_character_id = getattr(part, "character_id", None)
-                # Resolve the Character object first (may be None).
-                char = None
-                if part_character_id and self._active_project is not None:
-                    char = self._active_project.get_character(part_character_id)
-                # 1. Block Character voice resolution — when the Character
-                #    has a Voice Profile, it WINS and speaker_voice_map is
-                #    not consulted for this part (design record §19).
-                if char is not None and char.voice_profile_id:
-                    part_voice_id = char.voice_profile_id
-                    part_name = "{0}: {1}".format(char.name, i + 1)
-                # 2. Speaker voice map — only when the Character resolved
-                #    no voice (no Character, or Character without a Voice
-                #    Profile). This fixes the P3.22 edge case where the
-                #    speaker map could override a Character whose voice
-                #    happened to equal the dropdown default.
-                elif part_speaker and speaker_voice_map:
-                    mapped = speaker_voice_map.get(part_speaker)
-                    if mapped:
-                        part_voice_id = mapped
-                        part_name = "{0}: {1}".format(part_speaker, i + 1)
-                # 3. Design record §23: "If Character exists without
-                #    $SPEAKER: speaker is populated with Character name for
-                #    context and History."
-                if char is not None and not part_speaker:
-                    part_speaker = char.name
-                elif char is not None:
-                    # Character + $SPEAKER coexist: Character provides the
-                    # voice (handled above); $SPEAKER remains speaker context
-                    # (design record §19) — keep part_speaker as-is.
-                    part_name = "{0}: {1}".format(char.name, i + 1)
-                # P3.17/P3.27B/P3.28: Human-friendly, VERSIONED audio
-                # filenames.
-                # Format:
-                #   <Project>_<Scene>_Long_v01_Part_001.wav        (single)
-                #   <Project>_<Scene>_Long_v01_Part_001_<spk>.wav   (multi)
-                # The version slot guarantees a regenerated part can NEVER
-                # overwrite the previous good version (P3.27B §18; P3.28
-                # §7) — the allocator bumps vNN until the filename is free
-                # on disk. P3.28: the START version is asset-aware (max
-                # part_version among the slot's existing assets + 1), so
-                # even deleted files never cause version reuse.
-                from engine.output_guard import normalize_name_component
-
-                proj_name = normalize_name_component(self._current_project or "Project")
-                scene_name = normalize_name_component(
-                    scene.name if scene else "Scene")
-
                 part_index = i + 1
-                slot = slot_by_index.get(part_index)
-                slot_id = slot["slot_id"] if slot else (
-                    plain_slot_id(part_index))
-                if scene is not None and slot is not None:
-                    filename, part_version = next_slot_version(
-                        scene, slot_id, self._engine_outputs_dir(),
-                        project=proj_name, scene_name=scene_name,
-                        part_index=part_index, speaker=part_speaker,
-                        scene_id=scene_id_full)
-                else:
-                    from engine.output_guard import next_free_part_filename
-                    filename, part_version = next_free_part_filename(
-                        self._engine_outputs_dir(),
-                        project=proj_name, scene=scene_name,
-                        part_index=part_index, speaker=part_speaker,
-                        scene_id=scene_id_full)
-                job = BatchJob(
-                    name=part_name,
-                    prompt=part.prompt,
-                    voice_id=part_voice_id,
-                    parameters=job_params,
-                    output_filename=filename,
-                    project=self._current_project,
-                    speaker=part_speaker,  # dedikált speaker mező
-                    # C2 FIX: propagate scene/character context so they
-                    # survive into HistoryEntry via to_request().
-                    scene_id=scene_id_full,
-                    scene_name=scene.name if scene else None,
-                    # P3.23: use ONLY the part's block character_id so each
-                    # part links to the correct character for HistoryEntry +
-                    # AudioAsset. The sidebar selection is a UI viewing
-                    # context, not a block-level generation decision, and must
-                    # not be attached to parts that have no block Character.
-                    character_id=part_character_id,
-                    # P3.27B: part provenance for the output guard (expected
-                    # duration from the splitter's estimate) + history
-                    # traceability (part index + allocated version).
-                    part_index=part_index,
-                    part_version=part_version,
-                    expected_duration=getattr(part, "estimated_duration", None) or None,
-                    # P3.28: provenance — source block (closes D-5),
-                    # generation run, and slot id.
-                    source_block_id=getattr(part, "source_block_id", None),
-                    generation_run=generation_run,
-                    slot_id=slot_id,
-                )
+                job = self._build_long_part_job(
+                    part, part_index, slot_by_index.get(part_index),
+                    scene, scene_id_full, generation_run, base_params,
+                    default_voice_id, speaker_voice_map)
                 bm.add_job(job)
 
             # P3.28 §5: batch start = GENERATING (routed by scene_id —
@@ -3772,6 +3665,149 @@ class MainWindow(QMainWindow):
                 self, APP_NAME,
                 "Failed to start long narration:\n{0}\n\n"
                 "See logs/application.log for details.".format(exc))
+
+    def _build_long_part_job(self, part, part_index, slot, scene,
+                             scene_id_full, generation_run, base_params,
+                             default_voice_id, speaker_voice_map=None):
+        """Build ONE BatchJob for a splitter part (P3.45.6 addendum).
+
+        This is the per-part construction extracted VERBATIM from
+        ``_start_long_narration``'s loop so that Generate Long and
+        Re-add Missing share the ONE builder — identical voice
+        precedence (P3.23 §19/§23), parameter copy (P3.25 allow_sfx),
+        asset-aware versioned naming (P3.27B/P3.28) and full provenance
+        (P3.28 slot/source/run; C2 scene/character context). Behaviour
+        is byte-identical to the previous inline block for Generate Long.
+
+        ``part_index`` is the part's position in the RECORDED structure
+        (Generate Long passes the fresh split position; Re-add passes the
+        slot's recorded position). ``slot`` is the recorded slot dict
+        (``slot_by_index.get(part_index)`` for Generate Long).
+        """
+        from engine.models import GenerationParameters
+        from engine.batch_manager import BatchJob
+        from engine.audio_provenance import next_slot_version, plain_slot_id
+        from engine.output_guard import normalize_name_component
+        if speaker_voice_map is None:
+            speaker_voice_map = {}
+        job_params = GenerationParameters(
+            temperature=base_params.temperature,
+            top_p=base_params.top_p,
+            top_k=base_params.top_k,
+            max_new_tokens=base_params.max_new_tokens,
+            seed=base_params.seed,
+            append_silence=0.5,
+            normalize_output=base_params.normalize_output,
+            auto_play=False,
+            output_format=base_params.output_format,
+            # P3.25 (audit SS-M02): forward the Allow SFX policy —
+            # the copy previously omitted the flag, so Generate
+            # Long parts always re-emitted SFX tokens even when the
+            # user had suppressed them.
+            allow_sfx=base_params.allow_sfx,
+        )
+        # Resolve the voice_id for this part.
+        # P3.23 Voice Precedence (design record §19/§23 — Character
+        # is authoritative when assigned to the block; the legacy
+        # speaker map may NOT override an explicit Character):
+        #   1. Block Character (part.character_id → character.voice_profile_id)
+        #   2. Speaker Voice Map (speaker_voice_map.get(speaker)) —
+        #      only consulted when the Character resolved NO voice
+        #   3. Control Panel dropdown (default_voice_id)
+        part_voice_id = default_voice_id
+        part_name = "Part {0}".format(part_index)
+        part_speaker = getattr(part, "speaker", "") or None
+        part_character_id = getattr(part, "character_id", None)
+        # Resolve the Character object first (may be None).
+        char = None
+        if part_character_id and self._active_project is not None:
+            char = self._active_project.get_character(part_character_id)
+        # 1. Block Character voice resolution — when the Character
+        #    has a Voice Profile, it WINS and speaker_voice_map is
+        #    not consulted for this part (design record §19).
+        if char is not None and char.voice_profile_id:
+            part_voice_id = char.voice_profile_id
+            part_name = "{0}: {1}".format(char.name, part_index)
+        # 2. Speaker voice map — only when the Character resolved
+        #    no voice (no Character, or Character without a Voice
+        #    Profile). This fixes the P3.22 edge case where the
+        #    speaker map could override a Character whose voice
+        #    happened to equal the dropdown default.
+        elif part_speaker and speaker_voice_map:
+            mapped = speaker_voice_map.get(part_speaker)
+            if mapped:
+                part_voice_id = mapped
+                part_name = "{0}: {1}".format(part_speaker, part_index)
+        # 3. Design record §23: "If Character exists without
+        #    $SPEAKER: speaker is populated with Character name for
+        #    context and History."
+        if char is not None and not part_speaker:
+            part_speaker = char.name
+        elif char is not None:
+            # Character + $SPEAKER coexist: Character provides the
+            # voice (handled above); $SPEAKER remains speaker context
+            # (design record §19) — keep part_speaker as-is.
+            part_name = "{0}: {1}".format(char.name, part_index)
+        # P3.17/P3.27B/P3.28: Human-friendly, VERSIONED audio
+        # filenames.
+        # Format:
+        #   <Project>_<Scene>_Long_v01_Part_001.wav        (single)
+        #   <Project>_<Scene>_Long_v01_Part_001_<spk>.wav   (multi)
+        # The version slot guarantees a regenerated part can NEVER
+        # overwrite the previous good version (P3.27B §18; P3.28
+        # §7) — the allocator bumps vNN until the filename is free
+        # on disk. P3.28: the START version is asset-aware (max
+        # part_version among the slot's existing assets + 1), so
+        # even deleted files never cause version reuse.
+        proj_name = normalize_name_component(self._current_project or "Project")
+        scene_name = normalize_name_component(
+            scene.name if scene else "Scene")
+
+        slot_id = slot["slot_id"] if slot else (
+            plain_slot_id(part_index))
+        if scene is not None and slot is not None:
+            filename, part_version = next_slot_version(
+                scene, slot_id, self._engine_outputs_dir(),
+                project=proj_name, scene_name=scene_name,
+                part_index=part_index, speaker=part_speaker,
+                scene_id=scene_id_full)
+        else:
+            from engine.output_guard import next_free_part_filename
+            filename, part_version = next_free_part_filename(
+                self._engine_outputs_dir(),
+                project=proj_name, scene=scene_name,
+                part_index=part_index, speaker=part_speaker,
+                scene_id=scene_id_full)
+        return BatchJob(
+            name=part_name,
+            prompt=part.prompt,
+            voice_id=part_voice_id,
+            parameters=job_params,
+            output_filename=filename,
+            project=self._current_project,
+            speaker=part_speaker,  # dedikált speaker mező
+            # C2 FIX: propagate scene/character context so they
+            # survive into HistoryEntry via to_request().
+            scene_id=scene_id_full,
+            scene_name=scene.name if scene else None,
+            # P3.23: use ONLY the part's block character_id so each
+            # part links to the correct character for HistoryEntry +
+            # AudioAsset. The sidebar selection is a UI viewing
+            # context, not a block-level generation decision, and must
+            # not be attached to parts that have no block Character.
+            character_id=part_character_id,
+            # P3.27B: part provenance for the output guard (expected
+            # duration from the splitter's estimate) + history
+            # traceability (part index + allocated version).
+            part_index=part_index,
+            part_version=part_version,
+            expected_duration=getattr(part, "estimated_duration", None) or None,
+            # P3.28: provenance — source block (closes D-5),
+            # generation run, and slot id.
+            source_block_id=getattr(part, "source_block_id", None),
+            generation_run=generation_run,
+            slot_id=slot_id,
+        )
 
     def _on_scene_batch_completed(self, scene_id, summary) -> None:
         """P3.28 §5: the FINAL coverage recompute for a Scene's batch run.
@@ -4246,6 +4282,188 @@ class MainWindow(QMainWindow):
                 self, APP_NAME,
                 "Selective generation failed:\n{0}".format(exc))
 
+    def _on_readd_missing_parts(self) -> None:
+        """P3.45.6 addendum — [Re-add Missing]: rebuild queue rows for the
+        expected slots that have NEITHER audio NOR a queue row.
+
+        The queue and the Scene's expected-slot structure are decoupled
+        by design (queue = execution workspace, P3.45.3 §5; structure =
+        provenance, P3.44.6) and only change together at Generate Long.
+        Queue-only edits (Remove / Edit / Load Queue) leave the recorded
+        structure intact — CORRECT — but they could previously leave an
+        expected part with no regeneration path short of a full Generate
+        Long, which wipes the whole queue workspace.
+
+        This action repairs the WORKSPACE only:
+          1. the SAME ``validate_block_ranges`` fail-closed gate as
+             Generate Long (P3.45.6 Phase 2 — no part from invalid
+             ranges);
+          2. the SAME ``NarrationSplitter.split`` pass over the CURRENT
+             text + CURRENT blocks with CURRENT settings (single
+             authoritative engine);
+          3. parts are matched to missing slots by EXACT slot identity
+             (``block_slot_id`` — the same derivation
+             ``materialize_expected_slots`` uses). A slot whose text no
+             longer exists (block deleted, part decomposition changed)
+             or whose identity is positional only (plain parts) is
+             REPORTED with the Generate Long remedy — never forced into
+             a job (no wrong-text association);
+          4. each job is built by the shared ``_build_long_part_job``
+             (full provenance; asset-aware version; one fresh run id for
+             this activation) and APPENDED — the queue is never cleared,
+             and slots/assets/versions/selections are never touched.
+        """
+        if self._engine is None or self._batch_manager is None:
+            return
+        scene = self._active_scene
+        bm = self._batch_manager
+        if scene is None:
+            return
+        if bm.is_running:
+            QMessageBox.information(
+                self, APP_NAME,
+                "A batch generation is already running.\n\n"
+                "Wait for it to finish or press Stop first.")
+            return
+        from engine.audio_provenance import (
+            missing_expected_parts, allocate_generation_run, block_slot_id,
+        )
+        job_ids = {getattr(j, "slot_id", None) for j in bm.jobs}
+        missing = missing_expected_parts(scene, job_ids)
+        if not missing:
+            self._status_bar.showMessage(
+                "Nothing to re-add — every expected part already has "
+                "audio or a queue row.", 5000)
+            return
+        text = self._editor.get_text()
+        if not text.strip():
+            QMessageBox.warning(
+                self, APP_NAME,
+                "Cannot re-add missing parts: the editor text is empty.\n\n"
+                "The recorded structure no longer matches any text — run "
+                "Generate Long to re-materialise it.")
+            return
+        blocks = self._editor.block_manager.blocks
+        # Same fail-closed precondition as Generate Long (P3.45.6
+        # Phase 2): invalid Block ranges must never reach a splitter
+        # run, so no re-added Part can carry wrong or duplicated text.
+        if blocks:
+            from engine.narration_block_manager import validate_block_ranges
+            range_issues = validate_block_ranges(blocks, text)
+            if range_issues:
+                details = "\n".join(
+                    "  • {0}".format(issue.describe())
+                    for issue in range_issues[:8])
+                if len(range_issues) > 8:
+                    details += "\n  • … and {0} more".format(
+                        len(range_issues) - 8)
+                logger.error(
+                    "Re-add Missing blocked by invalid Block ranges "
+                    "(%d issues): %s", len(range_issues),
+                    "; ".join(i.describe() for i in range_issues[:8]))
+                QMessageBox.warning(
+                    self, APP_NAME,
+                    "Re-add stopped: {0} Narration Block range(s) no "
+                    "longer match the current text.\n\n"
+                    "The affected Blocks would generate wrong or "
+                    "duplicated text. Details:\n\n{1}\n\n"
+                    "Recovery: use Re-detect Blocks, or fix the text, "
+                    "then try again or run Generate Long.".format(
+                        len(range_issues), details))
+                return
+        # Same splitter pass as Generate Long (same parameters source,
+        # same globals, same raw-mode and SFX policy).
+        params = self._control_panel.get_parameters()
+        default_voice_id = self._control_panel.get_selected_voice_id()
+        raw_mode = self._editor.is_raw_mode()
+        from engine.narration_splitter import NarrationSplitter
+        splitter = NarrationSplitter()
+        try:
+            parts = splitter.split(
+                text=text,
+                blocks=blocks if blocks else None,
+                global_emotion=self._emotion,
+                global_style=self._style,
+                global_speed=self._speed,
+                global_pitch=self._pitch,
+                global_delivery=self._delivery,
+                base_parameters=params,
+                raw_mode=raw_mode,
+                detect_speakers=True,
+                allow_sfx=params.allow_sfx,
+            )
+        except ValueError as exc:
+            QMessageBox.critical(
+                self, APP_NAME,
+                "Speaker detection error:\n\n{0}".format(str(exc)))
+            return
+        # Index the CURRENT parts by their structural slot identity —
+        # exactly the derivation materialize_expected_slots uses (single
+        # source; first part wins for any duplicate key, which the
+        # splitter never produces).
+        part_by_slot = {}
+        for part in parts:
+            part_block_id = getattr(part, "source_block_id", None)
+            if part_block_id:
+                key = block_slot_id(
+                    part_block_id, getattr(part, "part_of_block", 1) or 1)
+                part_by_slot.setdefault(key, part)
+        scene_id_full = scene.id
+        # One fresh generation run for this activation (same rule as a
+        # Generate Long activation / a selective run).
+        generation_run = allocate_generation_run(scene)
+        added = []
+        unmatched = []
+        for slot in missing:
+            slot_id = slot.get("slot_id", "")
+            if not slot.get("block_id"):
+                unmatched.append((slot, "plain parts have no stable "
+                    "identity — run Generate Long"))
+                continue
+            part = part_by_slot.get(slot_id)
+            if part is None:
+                unmatched.append((slot, "the current text no longer "
+                    "produces this part — run Generate Long"))
+                continue
+            job = self._build_long_part_job(
+                part, slot.get("part_index") or 1, slot, scene,
+                scene_id_full, generation_run, params, default_voice_id, {})
+            bm.add_job(job)
+            added.append(job)
+            logger.info(
+                "Re-add Missing: restored queue row for slot %s "
+                "(block %s, part_index %s, run %s)",
+                slot_id, slot.get("block_id"), slot.get("part_index"),
+                generation_run)
+        dlg = self._alive_batch_dialog()
+        if dlg is not None and added:
+            dlg.on_readded_jobs(added)
+        if unmatched:
+            lines = "\n".join(
+                "  • {0} — {1}".format(
+                    (s.get("block_label")
+                     or (s.get("speaker") if s.get("speaker") else "")
+                     or "Part {0}".format(s.get("part_index", "?"))),
+                    reason)
+                for s, reason in unmatched[:8])
+            if len(unmatched) > 8:
+                lines += "\n  • … and {0} more".format(len(unmatched) - 8)
+            QMessageBox.warning(
+                self, APP_NAME,
+                "Re-added {0} of {1} missing part(s) to the queue.\n\n"
+                "The following expected parts could NOT be re-added "
+                "because the current text no longer matches their "
+                "recorded identity:\n\n{2}\n\n"
+                "Run Generate Long to re-materialise the structure — "
+                "generated audio and versions are never lost (a fresh "
+                "structure keeps joining every surviving slot "
+                "identity).".format(
+                    len(added), len(missing), lines))
+        elif added:
+            self._status_bar.showMessage(
+                "Re-added {0} missing part(s) to the queue — select and "
+                "press GENERATE CHECKED.".format(len(added)), 5000)
+
     def _on_use_version_requested(self, slot_id: str, asset_id: str) -> None:
         """P3.28 §15/Rec 16: explicit per-slot version selection.
 
@@ -4394,7 +4612,16 @@ class MainWindow(QMainWindow):
                 resolved_slot_sources, next_scene_combined_version,
                 build_scene_combined_entry, allocate_generation_run,
             )
-            sources, blockers = resolved_slot_sources(scene, app_root)
+            # P3.45.6 addendum — truthful blocker classification: pass the
+            # CURRENT structure's block ids so uncovered slots distinguish
+            # genuinely missing audio (block still in the text) from stale
+            # structure references (block deleted / re-detected — the
+            # recorded structure legitimately lags until the next Generate
+            # Long). Read-only: the recorded structure itself is never
+            # mutated here, and Combine stays fail-closed either way.
+            current_block_ids = self._combine_structure_block_ids(scene)
+            sources, blockers = resolved_slot_sources(
+                scene, app_root, current_block_ids=current_block_ids)
             if blockers:
                 QMessageBox.warning(
                     self, APP_NAME,
@@ -4535,6 +4762,42 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(
                 self, APP_NAME, "Scene Combine failed:\n{0}".format(exc))
             return False
+
+    def _combine_structure_block_ids(self, scene):
+        """P3.45.6 addendum: the CURRENT structure's block ids for the
+        Combine-time stale-vs-missing classification.
+
+        Source of truth by case:
+          * ACTIVE scene → the live editor block model (the P3.44.9
+            authoritative structure). An EMPTY live model is POSITIVE
+            evidence of an empty structure (all blocks deleted) and is
+            returned as an empty set — never silently upgraded to "no
+            evidence", so a fully-deleted structure classifies all its
+            block slots as stale references.
+          * Non-active scene (the by-id combine path) → the persisted
+            ``scene.narration_blocks`` ids (the best available snapshot,
+            saved on every scene switch). An EMPTY persisted list means
+            there is no trustworthy snapshot → ``None`` (legacy messages
+            only — never claim staleness without evidence).
+
+        Returns a set of block ids, or ``None`` when no evidence exists
+        (callers then get the exact legacy blocker messages).
+        """
+        ids = set()
+        if scene is self._active_scene and self._editor is not None:
+            # Active scene: the live model is the truth — ALWAYS return
+            # it (an empty set is positive evidence, see docstring).
+            try:
+                return {b.id for b in self._editor.block_manager.blocks}
+            except Exception:
+                logger.debug(
+                    "Combine classification: live block model unavailable",
+                    exc_info=True)
+                return set()
+        for block in (getattr(scene, "narration_blocks", None) or []):
+            if isinstance(block, dict) and block.get("id"):
+                ids.add(block["id"])
+        return ids or None
 
     def _on_batch_export_audio(self, scope: str, checked_indices: list) -> None:
         """P3.28 §17: Batch Audio Export — file copy ONLY.

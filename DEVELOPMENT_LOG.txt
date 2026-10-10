@@ -4785,3 +4785,61 @@ felhasználó tényleges „GUINEO / Leírás” projekt fájlja NEM állt
 rendelkezésre — a korrupt állapotok szintzetikus dokumentumokon
 reprodukálódnak; a záró kézi ellenőrzőlista a tervezési rekordban. A
 P3.45.6 ITT ÁLL MEG.
+
+P3.45.6 KIEGÉSZÍTŐ VIZSGÁLAT — Batch Queue Removal vs Scene Combine
+Integrity (a felhasználó által jelentett állapot: 15 látható sor,
+coverage PARTIAL 15/22, Combine elutasít — „Block 16 … Block 22 has no
+generated audio”). Alap: main @ 3fcd0d2 (a P3.45.6 záródokumentum-
+commitok). Teljes állapotlánc-határozat (tervezési rekord §1):
+a várólista (BatchManager._jobs) és a Scene.expected_audio_slots
+DEKAPPELT struktúrák, amelyek csak a Generate Long struktúraeseménynél
+változnak együtt; a Remove kizárólag várólista-művelet (a BatchJob
+törlése — nem érinti a Blokkot, a slotot, a hangot; P3.44.6/P3.45.3
+szerződés). A HIBA nem a szerződésben, hanem a környező szemantikában
+volt: (1) semmi nem jelezte, hogy 7 várt slotnak se hangja, se sora
+nincs, és az egyetlen helyreállítás (Generate Long) lenullázza a
+teljes várólistát; (2) a Combine blokkoló üzenete nem tudta
+megkülönböztetni a valóban hiányzó hangot (a Blokk még létezik) az
+elavult struktúra-hivatkozástól (törölt/újradetektált Blokk).
+
+JAVÍTÁS (három additív elem, fagyasztott szerződések érintetlenek):
+(1) resolved_slot_sources(current_block_ids=None) — a FEDETLEN slotok
+igazbesédű osztályozása (elavult hivatkozás + Generate Long orvosság
+vs. örökölt „no generated audio yet”); a default None bájtra azonos
+örökölt viselkedés; fedett slot SOHA nem osztályozódik (re-detect +
+teljes fedés után a Combine továbbra is sikeres — regressziózárolva);
+a _combine_scene az aktív jelenetnél az élő szerkesztő-Blokkokat,
+egyébként a perzisztált narration_blocks azonosítókat adja át.
+(2) missing_expected_parts + [Re-add Missing] felület a fedőfejlécben
+(„{N} expected part(s) missing from the queue”) — a gomb CSAK a
+munkateret javítja: ugyanaz a validate_block_ranges kapu, ugyanaz a
+szplitter-futtatás az aktuális szövegen, pontos slot-azonosítási
+párosítás, közös _build_long_part_job építő (a Generate Long
+konstrukciója szó szerint kiemelve), a jobok HOZZÁFŰZÉSE (a várólista
+soha nem ürül; slotok/eszközök/verziók soha nem érintettek). Plain
+slotok és nem párosítható identitások JELENTÉSE, soha kényszerítés
+(D-scenario védelem). (3) A Remove a döntési ponton kimondja a
+munkater-szerződést — megerősítés CSAK fedetlen strukturális sornál
+(az egyetlen Combine-következménnyel járó eset); fedett/manuális
+törlés továbbra is csendes.
+
+BIZONYÍTÉKOK: 28 determinisztikus regresszió
+(tests/test_p3_45_6_batch_removal_combine_integrity.py) — motoros
+osztályozási mátrix, valódi MainWindow-os Combine-huzalozás, valódi
+párbeszédablak-Remove-szemantika, A–E szcenáriók, és a teljes
+képernyőkép-állapot arany út (valódi generálás + valódi Combine;
+22/22 fedés és sikeres Combine a helyreállítás után). Stash-teszt:
+a javítás ELŐTT 24/28 piros, utána 28/28 zöld (kétszer). Érintett
+historikus csomagok úravalidálva zölden: p3_28+p3_44_6+p3_44_5+
+p3_31 = 151; p3_35+p3_45_3+p3_45_4+p3_45_1 = 126; P3.45.6 fázisok
+78; p3_44_9(+9_1)+p3_44_7+p3_30+p3_40+p3_44+p3_45_2a/2b = 283
+(+35 alteszt). Validátorok: verify_compile 159/159;
+verify_architecture PASS (a két dokumentált kivétellel);
+verify_integration PASS; verify_functional_integrity 80/80.
+
+MARADVÁNYOK (dokumentált döntések): plain slotok nem újraadhatóak
+(pozíció-identitás nem bizonyítható); a rész-bomlás eltolódása esetén
+az érintett al-slot jelentenek; nem aktív jelenet üres perzisztált
+listája örökölt üzeneteket ad; a P3.45.3-as re-detect maradvány
+(elavult slot-szerkezet a következő Generate Long-ig) változatlanul
+NYITOTT — ez a kör NEM változtatott a slotírás szerződésén.

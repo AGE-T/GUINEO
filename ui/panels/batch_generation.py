@@ -802,6 +802,14 @@ class BatchGenerationDialog(QDialog):
     # checked_indices) — scope "selected"|"parts"|"combined"|"everything".
     export_audio_requested = Signal(str, list)
 
+    # P3.45.6 addendum — queue repair for expected Scene parts that have
+    # neither generated audio nor a queue row (e.g. rows removed earlier:
+    # Remove deletes the generation JOB only, so the Scene's recorded
+    # structure keeps requiring the audio). MainWindow re-derives the
+    # parts from the CURRENT text through the same splitter + range gate
+    # as Generate Long and appends the missing rows.
+    readd_missing_requested = Signal()
+
     def __init__(self, manager: BatchManager, voices: List[VoiceProfile],
                  parent=None, scene=None, project=None, app_root: str = "",
                  review_mode: bool = False, settings_manager=None):
@@ -967,8 +975,44 @@ class BatchGenerationDialog(QDialog):
         self._update_start_button()
         self._refresh_table()
 
+    def _missing_expected_parts(self) -> list:
+        """P3.45.6 addendum: expected parts with neither audio nor a row.
+
+        Thin wrapper over the engine's single-source derivation
+        (``missing_expected_parts`` — queue/slot decoupling repair).
+        """
+        if self._scene is None or not self._manager:
+            return []
+        try:
+            from engine.audio_provenance import missing_expected_parts
+            job_ids = {getattr(j, "slot_id", None)
+                       for j in self._manager.jobs}
+            return missing_expected_parts(self._scene, job_ids)
+        except Exception:
+            return []
+
+    def on_readded_jobs(self, jobs) -> None:
+        """P3.45.6 addendum: register re-added structural jobs.
+
+        Re-added jobs are for UNCOVERED slots, so their transient check
+        state defaults to CHECKED — the P3.28 §11 rule (not-generated →
+        checked; generated slots are never pre-checked — regenerating
+        costs GPU minutes and existing audio is never invalid). Only the
+        NEW jobs are keyed; the user's other choices are never reset.
+        """
+        for job in jobs:
+            self._check_states[self._check_key(job)] = True
+        self.refresh_scene_context()
+
     def _update_coverage_header(self) -> None:
-        """P3.28 §5/Rec 12: the coverage header line above the table."""
+        """P3.28 §5/Rec 12: the coverage header line above the table.
+
+        P3.45.6 addendum: when expected parts have neither audio nor a
+        queue row (the Remove-created coverage gap), the header states
+        the count and the [Re-add Missing] button reflects it — the
+        queue must never silently look complete while Combine still
+        requires the missing audio.
+        """
         if self._scene is None or not hasattr(self, "_coverage_label"):
             return
         from engine.audio_provenance import (
@@ -986,7 +1030,17 @@ class BatchGenerationDialog(QDialog):
             SCENE_STATE_LABELS.get(state, state.upper()), covered, total)
         if run_hint:
             text += "  —  run {0}".format(run_hint)
+        missing = self._missing_expected_parts()
+        if missing:
+            text += "  —  {0} expected part(s) missing from the queue".format(
+                len(missing))
         self._coverage_label.setText(text)
+        if hasattr(self, "_readd_btn"):
+            self._readd_btn.setText(
+                "Re-add Missing ({0})".format(len(missing)) if missing
+                else "Re-add Missing")
+            self._readd_btn.setEnabled(
+                bool(missing) and not self._manager.is_running)
 
     def _update_start_button(self) -> None:
         """P3.28: the primary button's label reflects the checked set.
@@ -1365,6 +1419,25 @@ class BatchGenerationDialog(QDialog):
             self._sel_none_btn.setToolTip("Uncheck every part")
             self._sel_none_btn.clicked.connect(self._on_select_none)
             header_row.addWidget(self._sel_none_btn)
+            # P3.45.6 addendum — [Re-add Missing]: queue repair for
+            # expected parts that have neither audio nor a queue row
+            # (the coverage gap Remove can create). Visible/enabled only
+            # in scene mode when such parts exist and the queue is idle.
+            self._readd_btn = QPushButton("Re-add Missing")
+            _fit_button_height(self._readd_btn)
+            self._readd_btn.setToolTip(
+                "Rebuild queue rows for expected Scene parts that have\n"
+                "neither generated audio nor a queue row (e.g. rows\n"
+                "removed earlier — Remove deletes the generation job\n"
+                "only; the Scene still expects the audio).\n"
+                "\n"
+                "The Scene's recorded structure, generated audio and\n"
+                "versions are never touched — only the queue is\n"
+                "repaired. Parts whose text no longer exists are\n"
+                "reported, never forced.")
+            self._readd_btn.clicked.connect(
+                self.readd_missing_requested.emit)
+            header_row.addWidget(self._readd_btn)
             left.addLayout(header_row)
 
         # Toolbar row 1: Add / Edit / Duplicate / Remove ... Up / Down
@@ -2967,6 +3040,11 @@ class BatchGenerationDialog(QDialog):
                 self._export_btn.setEnabled(
                     not running and (completed_count >= 1
                                      or bool(self._scene.combined_outputs)))
+            # P3.45.6 addendum: [Re-add Missing] — enabled when idle AND
+            # expected parts genuinely have neither audio nor a row.
+            if hasattr(self, "_readd_btn"):
+                self._readd_btn.setEnabled(
+                    not running and bool(self._missing_expected_parts()))
 
     def _update_summary(self) -> None:
         """Populate the QUEUE SUMMARY sidebar widgets.
@@ -3091,12 +3169,73 @@ class BatchGenerationDialog(QDialog):
                     old_key)
             self._refresh_table()
 
+    def _removal_needs_confirmation(self, job) -> bool:
+        """P3.45.6 addendum: does removing THIS job remove the last
+        regeneration path for an uncovered expected slot?
+
+        True only when the job is STRUCTURAL (its slot is in the Scene's
+        recorded structure) AND the slot has no generated audio — the
+        exact case where Remove leaves an expected part that Combine
+        still requires with no queue row (audio can never become stale:
+        a covered slot resolves regardless of rows, and manual jobs have
+        no Scene meaning at all — those removals stay silent).
+        """
+        if self._scene is None or job is None:
+            return False
+        slot_id = getattr(job, "slot_id", None)
+        if not slot_id:
+            return False
+        slots = [s for s in
+                 (getattr(self._scene, "expected_audio_slots", None) or [])
+                 if isinstance(s, dict)]
+        slot = next((s for s in slots if s.get("slot_id") == slot_id), None)
+        if slot is None:
+            return False
+        from engine.audio_provenance import is_slot_covered
+        return not is_slot_covered(self._scene, slot_id)
+
     def _on_remove(self) -> None:
         idx = self._selected_row()
         if idx is None:
             return
+        jobs = self._manager.jobs
+        job = jobs[idx] if 0 <= idx < len(jobs) else None
+        # P3.45.6 addendum: state the Remove contract at the decision
+        # point — but ONLY when the removal actually has a Combine
+        # consequence (uncovered structural slot). Removing is easily
+        # reversible afterwards via [Re-add Missing], so this informs
+        # rather than blocks.
+        if self._removal_needs_confirmation(job):
+            slot = next(
+                s for s in self._scene.expected_audio_slots
+                if isinstance(s, dict)
+                and s.get("slot_id") == getattr(job, "slot_id", None))
+            label = (slot.get("block_label")
+                     or (slot.get("speaker") if slot.get("speaker") else "")
+                     or "Part {0}".format(slot.get("part_index", "?")))
+            reply = QMessageBox.question(
+                self, "Remove Part",
+                "Remove '{0}' from the queue?\n\n"
+                "Removing a row deletes the generation JOB only — it "
+                "does NOT remove the Scene Block, does not invalidate "
+                "the expected slot, and never deletes generated audio.\n\n"
+                "Scene Combine still requires this part's audio, so "
+                "'{1}' will be reported as missing until it is "
+                "generated. Use 'Re-add Missing' to restore the row "
+                "later.".format(getattr(job, "name", "") or "Part",
+                                label),
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes)
+            if reply != QMessageBox.StandardButton.Yes:
+                return
         self._manager.remove_job(idx)
         self._refresh_table()
+        # P3.45.6 addendum: the removal can create a missing-expected
+        # part — refresh the coverage header + [Re-add Missing] state so
+        # the queue never silently looks complete (scene mode only).
+        if self._scene is not None:
+            self._update_coverage_header()
 
     def _on_duplicate(self) -> None:
         idx = self._selected_row()

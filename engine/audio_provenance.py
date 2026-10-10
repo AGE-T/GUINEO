@@ -516,6 +516,41 @@ def scene_coverage_state(scene: Any, generating: bool = False,
     return SCENE_NOT_GENERATED
 
 
+def missing_expected_parts(scene: Any,
+                           job_slot_ids: Any) -> List[Dict[str, Any]]:
+    """P3.45.6 addendum: expected slots with NEITHER audio NOR a queue row.
+
+    A slot is *missing from the queue* when no live BatchJob carries its
+    ``slot_id`` AND no registered asset covers it — exactly the slots the
+    user can no longer regenerate from the Batch queue (e.g. after
+    ``Remove``, which deletes the generation job only and never touches
+    the Scene's recorded structure) while Scene Combine still requires
+    their audio (fail-closed against ``expected_audio_slots``).
+
+    ``job_slot_ids``: any iterable of the slot ids currently represented
+    by queue jobs (callers pass ``{j.slot_id for j in jobs}``). Slots
+    with an audio asset are NEVER missing (Combine resolves them even
+    without a row); slots WITH a row are never missing (the regeneration
+    path exists). Pure derivation — never mutates the Scene or the queue.
+    Returns the missing slot dicts in recorded structure order.
+    """
+    slots = [s for s in (getattr(scene, "expected_audio_slots", None) or [])
+             if isinstance(s, dict)]
+    if not slots:
+        return []
+    have_rows = {sid for sid in job_slot_ids
+                 if isinstance(sid, str) and sid}
+    missing: List[Dict[str, Any]] = []
+    for slot in slots:
+        slot_id = slot.get("slot_id", "")
+        if not slot_id or slot_id in have_rows:
+            continue
+        if is_slot_covered(scene, slot_id):
+            continue
+        missing.append(slot)
+    return missing
+
+
 def recompute_scene_status(scene: Any, generating: bool = False,
                            last_run_failed: bool = False) -> str:
     """Recompute + store the Scene's derived status. Returns the new value.
@@ -779,7 +814,8 @@ def build_scene_combined_entry(
     }
 
 
-def resolved_slot_sources(scene: Any, app_root: str) -> Tuple[
+def resolved_slot_sources(scene: Any, app_root: str,
+                          current_block_ids: Any = None) -> Tuple[
         List[Dict[str, Any]], List[str]]:
     """Resolve the per-slot audio sources for a Scene Combine operation.
 
@@ -790,7 +826,25 @@ def resolved_slot_sources(scene: Any, app_root: str) -> Tuple[
 
     Returns (sources, blockers). ``blockers`` names uncovered slots and
     missing files — the caller must NOT silently skip them (§52).
+
+    P3.45.6 addendum — truthful classification of UNCOVERED slots
+    (read-only; the structure is never mutated here): when
+    ``current_block_ids`` is provided (the ids of the blocks that exist
+    in the CURRENT text/structure), an uncovered slot whose ``block_id``
+    is no longer among them is reported as a STALE STRUCTURE REFERENCE
+    with the Generate Long remedy, instead of the legacy "no generated
+    audio yet" message that would demand audio for content the user has
+    already deleted. Covered slots are never classified (an asset
+    resolves → source), so a full-coverage combine is unaffected even
+    when block ids were replaced (e.g. after Re-detect). The default
+    ``None`` keeps the exact legacy messages for every existing caller.
+    An EMPTY set is positive evidence of an empty current structure
+    (all blocks deleted) — every block-derived slot is then stale.
     """
+    ids: Optional[set] = None
+    if current_block_ids is not None:
+        ids = {i for i in current_block_ids
+               if isinstance(i, str) and i}
     slots = [s for s in (getattr(scene, "expected_audio_slots", None) or [])
              if isinstance(s, dict)]
     sources: List[Dict[str, Any]] = []
@@ -802,7 +856,17 @@ def resolved_slot_sources(scene: Any, app_root: str) -> Tuple[
                  or "Part {0}".format(slot.get("part_index", "?")))
         asset = resolved_asset_for_slot(scene, slot_id)
         if asset is None:
-            blockers.append("'{0}' has no generated audio yet".format(label))
+            block_id = slot.get("block_id")
+            if (ids is not None and block_id
+                    and block_id not in ids):
+                blockers.append(
+                    "'{0}' is still expected by the recorded structure, "
+                    "but its Block no longer exists in the current text "
+                    "— run Generate Long to re-materialise the "
+                    "structure".format(label))
+            else:
+                blockers.append(
+                    "'{0}' has no generated audio yet".format(label))
             continue
         rel = asset.get("output_path", "")
         if not rel or not _file_exists(app_root, rel):

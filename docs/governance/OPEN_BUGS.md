@@ -3101,3 +3101,64 @@ warnings not shown in the parts list; dead `get_final_prompt` /
   Git tree into first-run provisioning. NOT changed in P3.45.6
   (frozen-suite hygiene; the Phase 3 first-run gate already makes the
   PRODUCT behavior immune).
+
+### P3.45.6 ADDENDUM — Batch Queue Removal vs Scene Combine Integrity: CLOSED
+
+**Reported evidence**: Batch Generation UI shows 15 visible rows while
+coverage reads PARTIAL (15/22); Combine Scene rejects with "'Block 16'
+… 'Block 22' has no generated audio yet".
+
+**Root cause (proven, design record §2 of
+docs/design/P3_45_6_BATCH_QUEUE_REMOVAL_COMBINE_INTEGRITY.md)**: the
+queue (`BatchManager._jobs`) and `Scene.expected_audio_slots` are
+decoupled structures that only ever change together at the Generate
+Long structure event. Remove is (and stays) a queue-workspace
+operation — it deletes the generation JOB only and never touches the
+Scene block, the slot, or audio (pinned contract, P3.44.6 §"preserved"
+/ P3.45.3 §5). The defect was in the SURROUNDING semantics, not the
+contract: (1) nothing surfaced that 7 expected slots had neither audio
+nor a queue row, and the only recovery (a fresh Generate Long) wipes
+the whole queue workspace; (2) Combine's blocker message could not
+distinguish genuinely missing audio (block still in the current text)
+from stale structure references (block deleted / re-detected), so the
+"generate the missing parts" remedy was unreachable or misleading.
+
+**Closed by (three additive pieces, frozen contracts untouched)**:
+1. `resolved_slot_sources(..., current_block_ids=None)` — truthful
+   classification of UNCOVERED slots (stale reference + Generate Long
+   remedy vs legacy "no generated audio yet"); default `None` is
+   byte-identical legacy behavior; covered slots are never classified
+   (re-detect + full coverage still combines — regression-locked).
+   `_combine_scene` passes live editor ids for the active scene,
+   persisted `narration_blocks` ids otherwise.
+2. `missing_expected_parts` + the dialog's [Re-add Missing] surface —
+   the coverage header states "{N} expected part(s) missing from the
+   queue" and the button repairs the WORKSPACE only: the same
+   `validate_block_ranges` gate, the same splitter pass over the
+   current text, exact slot-identity matching, the shared
+   `_build_long_part_job` builder (Generate Long's construction,
+   factored verbatim), jobs APPENDED (queue never wiped, slots/assets/
+   versions never touched). Plain slots and unmatched identities are
+   REPORTED, never forced (scenario D protection).
+3. Remove states the job-only contract at the decision point — a
+   confirmation fires ONLY for uncovered structural rows (the one case
+   with a Combine consequence); covered/manual removals stay silent.
+
+**Evidence**: 28 deterministic regressions
+(tests/test_p3_45_6_batch_removal_combine_integrity.py) — engine
+classification matrix, real-MainWindow combine wiring, real-dialog
+Remove semantics, scenarios A–E, and the full screenshot-state golden
+path (real generation + real Combine). Stash-verified red pre-fix
+(24/28 fail on the unmodified engine) / green post-fix. Affected
+historical suites re-validated green; validators re-run.
+
+**Residuals (documented decisions, not defects)**:
+- Plain slots are not re-addable (positional identity cannot prove the
+  text; Generate Long is the remedy).
+- Part-decomposition drift (block survives, duration split changed)
+  → the affected sub-slot is reported as not re-addable.
+- Non-active scene with an empty persisted block list falls back to
+  legacy blocker messages (no trustworthy structure evidence).
+- The pre-existing P3.45.3 residual (Re-detect replaces ids without
+  re-materialising slots — "Unlinked part" chips) remains OPEN and
+  untouched: this addendum does not change slot writing.
