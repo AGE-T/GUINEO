@@ -391,18 +391,22 @@ class TestStartupRestoration(_StartupHarness):
 
 
 class TestShippedDefaultProjectRestore(_StartupHarness):
-    """The SHIPPED first-run layout: the repo carries a tracked
-    "Default" project whose scene holds the first-run demo text.
+    """A shipped-style first-run layout: a "Default" project on disk whose
+    scene holds the first-run demo text (seeded into the temporary
+    APP_ROOT by the test itself).
 
     P3.45.6 Phase 3: a genuinely FRESH install (first run not yet
     completed — the merged schema default "Default" was never chosen
     by anyone) keeps the ORIGINAL first-run experience exactly: the
     demo text arrives through the first-run insertion path, the
     in-memory default project stays, and NO restoration fires. This
-    also keeps the first run immune to the state of the shipped
-    project file on disk (the battery-order hazard: suite runs mutate
-    the tracked projects/Default/project.json — a pre-existing
-    test-hygiene defect recorded in OPEN_BUGS)."""
+    also keeps the first run immune to the state of any such project
+    file on disk (the battery-order hazard: before the P3.45.6
+    closeout, suite runs mutated the then-tracked
+    projects/Default/project.json — the hygiene defect recorded and
+    CLOSED in OPEN_BUGS; the tracked file itself was removed and the
+    suite now runs over an isolated session APP_ROOT, see
+    tests/conftest.py)."""
 
     def test_first_run_untouched_with_shipped_default_on_disk(self):
         from engine.models import Scene as _Scene

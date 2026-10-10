@@ -60,6 +60,7 @@ from engine.combined_audio import (
     sanitize_output_filename,
 )
 from engine.logger import get_logger
+from ui.feedback import FeedbackDialog
 from ui.theme import Palette  # noqa: F401  (kept: row styling below)
 
 
@@ -1052,7 +1053,8 @@ class AssembleScenesDialog(QDialog):
             for e in result.errors:
                 summary_lines.append("  \u2022 {0}".format(e))
 
-        QMessageBox.information(
-            self, "Assembly Complete", "\n".join(summary_lines))
+        FeedbackDialog.information(
+            self, "Assembly Complete", summary_lines[0],
+            "\n".join(summary_lines[1:]))
 
         self.accept()

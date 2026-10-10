@@ -33,6 +33,15 @@ htmlcov/
 .tox/
 
 # --- SpeechStudio runtime artifacts ---
+# User project data (created/owned at runtime under APP_ROOT/projects —
+# the five test-mutated project.json files that accidentally shipped in
+# the first P3.45.6 builds were exactly this kind of runtime data; see
+# docs/design/P3_45_6_CLOSEOUT_RELEASE_CLEANUP_COMBINE_NOTIFICATIONS.md).
+projects/
+
+# User preset library (PresetManager writes under APP_ROOT/presets).
+presets/
+
 # Generated audio outputs (regenerable)
 outputs/*.wav
 

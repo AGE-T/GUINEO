@@ -147,13 +147,26 @@ class TestAppRoot(unittest.TestCase):
             "(P3.45.4 removed the shadowed duplicate)")
 
     def test_behavior_unchanged(self):
-        """The authoritative property keeps the P3.43 behaviour."""
+        """The authoritative property keeps the P3.43 behaviour.
+
+        P3.45.6 closeout: the default-root construction pins ONLY the
+        app_root auto-detection, so the directory-creating managers
+        (voices/outputs/history) are stubbed for it — a default-root
+        Engine() otherwise leaves empty runtime directories inside the
+        repository (the suite-level runtime-path isolation lives in
+        tests/conftest.py; the mkdir side effects are not under test
+        here and were never asserted).
+        """
+        from unittest.mock import patch
         from engine.engine import Engine
         with tempfile.TemporaryDirectory(prefix="ss_p3454_root_") as tmp:
             eng = Engine(app_root=tmp)
             self.assertEqual(eng.app_root, tmp)
         default_root = _ROOT
-        eng2 = Engine()
+        with patch("engine.engine.VoiceManager"), \
+                patch("engine.engine.AudioManager"), \
+                patch("engine.engine.HistoryManager"):
+            eng2 = Engine()
         self.assertEqual(eng2.app_root, default_root)
         # read-only: no setter exists
         with self.assertRaises(AttributeError):

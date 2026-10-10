@@ -4843,3 +4843,129 @@ az érintett al-slot jelentenek; nem aktív jelenet üres perzisztált
 listája örökölt üzeneteket ad; a P3.45.3-as re-detect maradvány
 (elavult slot-szerkezet a következő Generate Long-ig) változatlanul
 NYITOTT — ez a kör NEM változtatott a slotírás szerződésén.
+
+P3.45.6 ZÁRÓKORREKCIÓ — Release- és projektadat-tisztítás, Combine
+Scene célzott reprodukció, notification-ablakok sikeresikon-cseréje.
+Alap: main @ 5ed1a91 (a kiegészítő kiadás). A kör HÁROM korrekciót
+zár le, új termékfejlesztési fázist NEM indít, force push NINCS, a
+meglevő P3.45.6 javítások érintetlenek.
+
+1) RELEASE- ÉS PROJEKTDATA-TISZÁSÍTÁS. Az ae809ae → 5ed1a91 diff
+pontosan öt újonnan követett projects/*/project.json fájlt mutat;
+mindegyik szerepe bizonyítva (Git-előzmény + tesztek +
+betöltési útvonal): 3× „Golden” (6bf099ce/7e4aa44e/85055f18) =
+test-fixture a test_p3_43 TestGoldenPath-ból (Project „Golden” +
+„Anna Char” + „GoldenScene” valódi MainWindow-n át; a
+karakter-alkalmazó mentési folyamat a valódi APP_ROOTú
+ProjectManager-be írt — 3 UUID = 3 futás); e2315687-5f0 „Default”
+= futás közben keletkezett adat a Phase 5 fejlesztői futásokból
+(12:28:23 készült, a 12:30:29-es 5e7d1d8 commitba került; a
+demószöveget a memóriabeli alapértelmezett jelenet hordozta);
+e660e1b8-70d „Default” = futás közben keletkezett + teszt által
+mutált adat („01 Persisted Name”… ötödik „05 Renamed Echo”
+tesztjelenet-nevek; az a2027fe-ben rögzített higiéniás hiba
+tárgya). EGYIK SEM szándékosan szállított demó/seed adat: az első
+indulási élmény KÓDBÓL származik (demószöveg-beszúrás +
+fantom projekt, mw:678-707), a termékkód egyik UUID-ra sem
+hivatkozik, a TestShippedDefaultProjectRestore a saját tmp
+APP_ROOT-jába seedeli a saját „Default” példányát. GYÖKÉROK: a
+MainWindow-harnessek Engine(app_root=tmp)-et adnak át, de a
+MainWindow SAJÁT modulszintű APP_ROOT-ja a repó-gyökér maradt —
+így a presets/projects/manual-concat-outputs a REPO-ba oldódtak
+fel (13 save_project hívási pont), és a fáziscommitok a piszkos
+fát git add-olták. MELLÉKCSATORNÁK: engine/logger.py a repó
+logs/-jába merevíti a naplózást (az engine csomag __init__-je már
+a patch-elés ELŐTT létrehozza a Logger single-tont), és a
+SettingsManager.instance(<repo>/settings) alapértelmezett
+mentést ír. JAVÍTÁS: git rm -r projects/ (mind az öt);
+.gitignore: projects/ és presets/ (a szivárgási osztály kapun
+zárva); tests/conftest.py MUNKAMENET-szintű futásidejű-útvonal-
+izoláció (ui.main_window.APP_ROOT → munkamenet-tmp + assets
+symlink a logó-tűzéshez; Logger alapértelmezett könyvtárának
+átirányítása single-ton-resettel és a repó-fájlhandlerek
+leválásával; SettingsManager.instance CSAK a repó-útvonal
+esetén irányít át); a test_p3_45_4 default-gyökerű Engine()-tűzése
+a három könyvtárkészítő menedzserrel stub-olva (maga a tűzés
+változatlan); a jelenlegi futásidejű maradványok törölve.
+Ellenőrzés: a teljes tesztfuttatás UTÁN sem jelenik meg settings/,
+logs/, outputs/, voices/, projects/, presets/, a git status
+tisztán a szándékolt módosításokat mutatja.
+
+2) COMBINE SCENE CÉLZOTT REPRODUKCIÓ (A–D). A kiegészítő kör
+gyökéroka változatlan (várólista/slot-struktúra dekapplálás; a
+Remove kizárólag várólista-művelet — lásd a kiegészítő tervezési
+rekord §2-§3). A tulajdonos A–D forgatókönyvei determinisztikus
+regressziókkal lefedve: A = TestRemoveSemantics (4 teszt; a
+csak-Job-szerződés megerősítése pont a következményes eltávolításnál)
++ a TestScreenshotGoldenPath jelentett 15/22 állapota; B =
+TestScenarioBStaleAfterDeletion + a Generate Long utáni
+újragenerálási teszt; C = ÚJ test_multi_block_deletion_then_
+regenerate_combine_uses_current_structure (EGY kijelöléssel törölt
+KÉT Blokk a P3.44.9 transzformátoron át; a sor pontosan
+["blk01:1","blk04:1"] slot-azonosítókat hordoz; a Combine CSAK az
+aktuális fedetlen Block 4-et nevezi meg, soha a törötteket; a
+történeti hang append-only módon megőrződik); D = ÚJ test_real_
+disk_save_reload_preserves_contract (valódi ProjectManager
+save→friss-menedzser-reload: a törölt Blokk NEM tér vissza, az
+érvényes hang slot_id/generation_run/part_version öröklődése és a
+fájljai megmaradnak, a Combine őszinte osztályozása, majd a
+újragenerálás után sikeres kombinálás változatlan öröklődéssel).
+A fagyasztott szerződések végig érintetlenek; a tünet NEM a
+hiányzó Blokkok figyelmen kívül hagyásával, történeti hang
+törlésével vagy csendes kihagyással lett „javítva”.
+
+3) NOTIFICATION SIKERESIKON (ok2.png). Az érintett ablakok = a
+POZITÍV esemény-visszajelző dialógusok: a 7 strukturált
+FeedbackDialog.information hely (Projekt mentése — a tulajdonos
+példája, Jelenet mentése, Preset export, Hangprofil export ×2,
+Batch-várólista mentése/betöltése) + a 10 örökölt plain
+QMessageBox.information siker-hely (Preset import, Batch-audio
+export, Hangprofil import, Hang export, History-export, Legacy
+projekt import, Jelenet betöltése, Export Complete, Assembly
+Complete, Added to Scene) — mind a KÖZÖS útvonalra migrálva.
+Semmilyen változás: a 38 critical / 51 warning / 25 question hely
+és a ~23 semleges information-értesítés (forrásszintű tűzések).
+Az assetek: assets/icons/ok2.png (a tulajdonosi mű VELETELENül,
+140×145, teljesen átlátszatlan — ellenőrizve) +
+assets/icons/ok2_transparent.png (a megjelenített,
+háttér-átlátszóságra előkészített változat: szegély-alterületi
+árasztás csak a HÁTTÉRRE — a rajz körvonala zárja ki a
+belépést, így a belső fehér elemek (lencsék, pofa, ujjrések)
+érintetlenek maradnak; a lefedettség-kódolt alfa éltörlés nélküli
+éleket ad; a rajz pixelei bájtazonosak — 12008 pixel, 2311 belső
+fehér pixel, 868 részleges-alfa élpixel, sarok-Alfa=0). A
+megjelenítés: a FeedbackDialog közös útvonalán 48px-es
+üzenetdoboz-ikonméretre, képarányt megtartva (140:145→46:48),
+DPR-tudatosan, gyorsítótárazva, APP_ROOT-relatív feloldással
+(abszolút fejlesztői útvonal NINCS — CWD-függetlenség tesztelve);
+hiányzó asset esetén csendes visszaesés a stock Information
+ikonra. VIZUÁLIS ELLENŐRZÉS (offscreen, őszintén dokumentálva):
+kompozit-ellenőrzés sötét/világos háttéren — nincs fehér
+téglalap, nincs halo, nincs torzulás (az átlátszatlan eredeti
+sötéten VLM-mel igazoltan a „zavaró fehér doboz”); VALÓDI
+dialógus-render modern-dark témával (box.grab(), 297×190) — az
+ikon látható, megfelelő méretű, átlátszó hátterű, nem vágott, a
+szöveg elrendezése ép. ŐSZINTE MARADVÁNY: a közel-fekete rajz
+kontrasztja a 4 sötét témán alacsony (a feladat tilalma miatt a
+rajzot NEM színeztük át; világos témán tökéletesen olvasható; a
+Windows-oldali végleges megjelenés a tulajdonos kézi listáján
+marad).
+
+TESZTEK: tests/test_p3_45_6_closeout_notification_icon.py (17
+teszt: asset-szerződések, pixmap-feloldás/méret/képarány/cache/
+CWD-függetlenség/útvonal-forrásszken, valódi widget-szintű
+ikon-címke, visszaesés, stock-ikon-őrzés, 11 hívási pont +
+üzenet-tűzések + örökölt-blob-hiány, panelmigrációk, semleges/
+hiba/question űrlapok őrzése, .gitignore-bejegyzések, élő
+conftest-izoláció + valódi MainWindow-ProjectManager a
+munkamenet-gyökérben); a Combine-állomány +2 (28→30);
+test_p3_28 export-patchjei az új közös útvonalra; test_p3_45_4
+menedzser-stubok; startup_restoration docstring-frissítés.
+Fókuszált futtatások: 151 + 436 = 587 zöld; Combine 30/30 kétszer;
+ikon 17/17 kétszer. Teljes akkumulátor, validátorok, indítási
+füstteszt és a friss, megtisztított Git-fából épített
+releases/GUINEO_P3.45.6_current.zip (név szerint ellenőrzött
+tartalom: NINCS benne projects/, beállítás, napló vagy cache; a
+két ok2 asset BENNE van) — lásd a zárójelentést. A build külön
+commitban; keep-last-5; push után helyi HEAD == origin/main;
+munkafa tiszta. P3.45.6 ZÁRÓKORREKCIÓ ITT ÁLL MEG.

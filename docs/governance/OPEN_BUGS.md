@@ -3080,10 +3080,11 @@ documented in the design record §5.3. Residuals recorded: split-time
 warnings not shown in the parts list; dead `get_final_prompt` /
 `Engine.preview_prompt` (zero callers) left for separate hygiene.
 
-### P3.45.6 finding (NEW, pre-existing defect made visible) — tracked shipped project mutated by test runs
+### P3.45.6 finding (pre-existing defect made visible) — tracked shipped project mutated by test runs (CLOSED in the P3.45.6 closeout)
 
-- **Status**: OPEN (test hygiene; outside the P3.45.6 five-phase scope)
-- **Defect**: the repo ships a tracked `projects/e2315687-5f0/project.json`
+- **Status**: CLOSED (P3.45.6 closeout correction round; see
+  docs/design/P3_45_6_CLOSEOUT_RELEASE_CLEANUP_COMBINE_NOTIFICATIONS.md §1)
+- **Defect**: the repo shipped a tracked `projects/e2315687-5f0/project.json`
   ("Default", scene "Untitled" holding the first-run demo text), and
   MainWindow-driving tests MUTATE this tracked file during suite runs
   (scene/project save flows over the repo ProjectManager; measured
@@ -3101,6 +3102,53 @@ warnings not shown in the parts list; dead `get_final_prompt` /
   Git tree into first-run provisioning. NOT changed in P3.45.6
   (frozen-suite hygiene; the Phase 3 first-run gate already makes the
   PRODUCT behavior immune).
+- **RESOLUTION (P3.45.6 closeout)**: ALL FIVE tracked
+  `projects/*/project.json` files removed from the Git tree (each
+  proven test-fixture or dev-run runtime data — 3x "Golden" from
+  test_p3_43 TestGoldenPath, the runtime-created "Default" pair;
+  none referenced by product code; the intended first-run demo is
+  code-generated, so nothing ships in `projects/` and no user data
+  was lost). `.gitignore` now excludes `projects/` and `presets/`.
+  Root cause closed suite-wide: `tests/conftest.py` redirects
+  `ui.main_window.APP_ROOT` (with a symlinked read-only `assets/`),
+  the engine logger default dir and the repo-path
+  `SettingsManager.instance` to a session temp root; the one
+  default-root `Engine()` pin (test_p3_45_4) stubs the mkdir'ing
+  managers. Verified: full battery leaves NO runtime directory
+  behind and no tracked file modified (post-run `git status`
+  clean; `test_p3_45_6_closeout_notification_icon.py` pins the
+  live isolation).
+
+### P3.45.6 CLOSEOUT — release cleanup / Combine A–D / notification success icon: CLOSED
+
+- **Status**: CLOSED (closeout correction round; design record
+  docs/design/P3_45_6_CLOSEOUT_RELEASE_CLEANUP_COMBINE_NOTIFICATIONS.md;
+  regressions in tests/test_p3_45_6_closeout_notification_icon.py
+  (17) and tests/test_p3_45_6_batch_removal_combine_integrity.py
+  (28 → 30)).
+- **Release cleanup**: the five tracked project.json test/runtime
+  artifacts removed and their leak class closed (gitignore +
+  suite-level APP_ROOT isolation) — see the resolved entry above.
+- **Combine A–D**: owner scenarios pinned deterministically —
+  multi-block simultaneous deletion (queue holds only current
+  blocks' items; Combine names only the current uncovered block;
+  orphaned historical audio preserved append-only) and the REAL
+  ProjectManager disk save → reload contract (deleted blocks don't
+  reappear; valid audio + slot_id/generation_run/part_version
+  lineage preserved; honest stale classification; successful
+  combine after regeneration).
+- **Notification success icon**: the positive event-feedback
+  dialogs (7 structured + 10 migrated legacy success sites) display
+  the packaged `ok2.png` artwork via the transparency-prepared
+  variant through the ONE common path (`FeedbackDialog`); errors,
+  warnings, confirmations and neutral notices keep their stock
+  semantic icons (source- and widget-level pins).
+- **Residual (documented, intentional)**: the near-black mascot
+  drawing has low contrast on the 4 dark themes (the task forbids
+  redrawing/recoloring the artwork; light theme fully readable; a
+  theme-aware variant remains a future option). Windows-side visual
+  confirmation stays on the owner's manual checklist (offscreen
+  verification documented in the design record §3.4).
 
 ### P3.45.6 ADDENDUM — Batch Queue Removal vs Scene Combine Integrity: CLOSED
 

@@ -1414,7 +1414,7 @@ class TestBatchExport(_MWHarness):
         rel_files = [a["output_path"] for a in self.scene.audio_assets]
         with patch("PySide6.QtWidgets.QFileDialog.getExistingDirectory",
                    return_value=dest), \
-             patch("PySide6.QtWidgets.QMessageBox.information",
+             patch("ui.feedback.FeedbackDialog.information",
                    return_value=None):
             self.win._on_batch_export_audio("parts", [])
         copied = sorted(os.listdir(dest))
@@ -1424,7 +1424,7 @@ class TestBatchExport(_MWHarness):
         # Export again → collisions get " (2)" suffixes, no overwrite.
         with patch("PySide6.QtWidgets.QFileDialog.getExistingDirectory",
                    return_value=dest), \
-             patch("PySide6.QtWidgets.QMessageBox.information",
+             patch("ui.feedback.FeedbackDialog.information",
                    return_value=None):
             self.win._on_batch_export_audio("parts", [])
         self.assertEqual(len(os.listdir(dest)), 4)
@@ -1438,7 +1438,7 @@ class TestBatchExport(_MWHarness):
         from unittest.mock import patch
         with patch("PySide6.QtWidgets.QFileDialog.getExistingDirectory",
                    return_value=dest), \
-             patch("PySide6.QtWidgets.QMessageBox.information",
+             patch("ui.feedback.FeedbackDialog.information",
                    return_value=None):
             self.win._on_batch_export_audio("selected", [0])
         self.assertEqual(len(os.listdir(dest)), 1)

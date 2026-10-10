@@ -3111,8 +3111,8 @@ class MainWindow(QMainWindow):
                 preset.name = os.path.splitext(os.path.basename(path))[0]
             self._preset_manager.save(preset)
             self._refresh_presets()
-            QMessageBox.information(self, APP_NAME,
-                                    "Imported preset: {0}".format(preset.name))
+            FeedbackDialog.information(self, APP_NAME,
+                                       "Imported preset: {0}".format(preset.name))
         except Exception as exc:
             QMessageBox.critical(self, APP_NAME,
                                  "Failed to import preset: {0}".format(exc))
@@ -4883,8 +4883,9 @@ class MainWindow(QMainWindow):
                     "Skipped {0} (missing/failed):".format(len(skipped)))
                 for name in skipped:
                     summary_lines.append("  ✗ {0}".format(name))
-            QMessageBox.information(
-                self, APP_NAME, "\n".join(summary_lines))
+            FeedbackDialog.information(
+                self, APP_NAME, summary_lines[0],
+                "\n".join(summary_lines[1:]))
             logger.info("P3.28: batch audio export (scope=%s): %d copied, "
                         "%d skipped", scope, len(copied), len(skipped))
         except Exception as exc:
@@ -5179,7 +5180,7 @@ class MainWindow(QMainWindow):
             return
         new_id = dialog.applied_profile_id()
         if new_id:
-            QMessageBox.information(
+            FeedbackDialog.information(
                 self, APP_NAME,
                 "Voice profile '{0}' imported successfully.".format(
                     dialog.values()["name"]))
@@ -6139,11 +6140,12 @@ class MainWindow(QMainWindow):
             return
         try:
             path = self._engine.export_voice_profile(voice_id, export_dir)
-            QMessageBox.information(
+            FeedbackDialog.information(
                 self, "Export Success",
-                "Voice '{0}' exported to:\n{1}\n\n"
+                "Voice '{0}' exported".format(voice_name),
+                "Location:\n{0}\n\n"
                 "The exported folder contains the reference WAV and metadata.".format(
-                    voice_name, path))
+                    path))
         except Exception as exc:
             logger.exception("Voice export failed: %s", exc)
             QMessageBox.critical(self, "Export Failed",
@@ -6501,8 +6503,9 @@ class MainWindow(QMainWindow):
             "JSON Files (*.json);;All Files (*)")
         if file_path:
             self._engine._history.export_entry(entry_id, file_path)
-            QMessageBox.information(self, "Export Success",
-                                    "History entry exported to:\n{0}".format(file_path))
+            FeedbackDialog.information(
+                self, "Export Success", "History entry exported",
+                "Location:\n{0}".format(file_path))
 
     def _on_history_project_changed(self, project: str) -> None:
         """Project name changed in the History tab.
@@ -6924,13 +6927,13 @@ class MainWindow(QMainWindow):
                 return
             # Load the imported project
             self._load_native_project(project)
-            QMessageBox.information(
+            FeedbackDialog.information(
                 self, APP_NAME,
-                "Legacy project imported as new native Project:\n"
-                "  {0}\n\n"
-                "The project has been saved to projects/{1}/.\n"
+                "Legacy project imported as new native Project: {0}".format(
+                    project.name),
+                "The project has been saved to projects/{0}/.\n"
                 "Use Save Project to update it going forward.".format(
-                    project.name, project.id))
+                    project.id))
         except Exception as exc:
             logger.exception("Failed to import .sproj: %s", exc)
             QMessageBox.critical(self, APP_NAME,
@@ -7292,12 +7295,13 @@ class MainWindow(QMainWindow):
             # (same code path as the menu Batch Queue and Long Generation).
             if self._engine is not None:
                 self._present_batch_dialog(scene=None)
-            QMessageBox.information(
+            FeedbackDialog.information(
                 self, APP_NAME,
-                "Scene loaded: {0}\n{1} lines, {2} speakers.\n\n"
+                "Scene loaded: {0}".format(scene.name),
+                "{0} lines, {1} speakers.\n\n"
                 "Completed lines are preserved. Pending/failed lines can be\n"
                 "generated via the Start button in the Batch dialog.".format(
-                    scene.name, len(scene.lines),
+                    len(scene.lines),
                     len({l.speaker for l in scene.lines if l.speaker})))
         except Exception as exc:
             logger.exception("Failed to load scene: %s", exc)

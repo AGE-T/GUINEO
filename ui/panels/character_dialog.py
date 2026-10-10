@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from engine.models import Character, VoiceProfile
 from engine.logger import get_logger
+from ui.feedback import FeedbackDialog
 # P3.43: fixed latent import — engine.logger has no module-level `logger`
 # name, so importing it crashed the dialog the moment Character
 # Management was opened (tests only AST-parsed the file, never imported
@@ -316,7 +317,7 @@ class CharacterManagementDialog(QDialog):
         char = self._selected_character
         if char.id not in self._active_scene.character_ids:
             self._active_scene.character_ids.append(char.id)
-            QMessageBox.information(
+            FeedbackDialog.information(
                 self, "Added to Scene",
                 "Character '{0}' added to Scene '{1}'.".format(
                     char.name, self._active_scene.name))

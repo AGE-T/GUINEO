@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QFont
 
 from engine.project_exporter import ProjectExporter, ExportResult
+from ui.feedback import FeedbackDialog
 from ui.theme import Palette
 
 
@@ -207,12 +208,12 @@ class ExportProjectDialog(QDialog):
 
     def _show_report(self, result: ExportResult) -> None:
         """Show the export report dialog."""
-        msg = "Project exported successfully.\n\n"
-        msg += "Location:\n{0}\n\n".format(result.export_dir)
-        msg += "Summary:\n{0}".format(result.summary())
+        details = "Location:\n{0}\n\n".format(result.export_dir)
+        details += "Summary:\n{0}".format(result.summary())
         if result.warnings:
-            msg += "\n\nWarnings:\n" + "\n".join("  • " + w for w in result.warnings)
-        QMessageBox.information(self, "Export Complete", msg)
+            details += "\n\nWarnings:\n" + "\n".join("  • " + w for w in result.warnings)
+        FeedbackDialog.information(self, "Export Complete",
+                                   "Project exported successfully.", details)
 
 
 def _safe_name(name: str) -> str:

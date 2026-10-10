@@ -470,15 +470,20 @@ class _MWHarness(unittest.TestCase):
     def dialog(self):
         return self.win._batch_dialog
 
-    def combine_warning(self):
-        """Run Combine (the real _combine_scene return path) capturing
-        the warning message text (if any)."""
+    def combine_warning_for(self, scene):
+        """Run Combine for the GIVEN scene (the real _combine_scene
+        return path) capturing the warning message text (if any)."""
         from unittest.mock import patch
         from PySide6.QtWidgets import QMessageBox
         with patch.object(QMessageBox, "warning", return_value=None) as warn:
-            ok = self.win._combine_scene(self.scene)
+            ok = self.win._combine_scene(scene)
         msg = warn.call_args[0][2] if warn.called else ""
         return ok, msg
+
+    def combine_warning(self):
+        """Run Combine (the real _combine_scene return path) capturing
+        the warning message text (if any)."""
+        return self.combine_warning_for(self.scene)
 
 
 # ===========================================================================
@@ -854,6 +859,87 @@ class TestScenarioCRegenerateAndCombine(_MWHarness):
         self.assertEqual([s["slot_id"] for s in entry["sources"]],
                          ["blk01:1", "blk02:1"])
 
+    def test_multi_block_deletion_then_regenerate_combine_uses_current_structure(self):
+        """P3.45.6 closeout — user scenario C: MULTIPLE blocks deleted in
+        ONE editor selection, then the Batch queue is regenerated.
+
+        The queue must contain generation items for ONLY the current
+        blocks, and the Combine validation must use exactly the same
+        authoritative Scene structure the regeneration was built from:
+        the deleted blocks are never demanded again, while their
+        historical audio stays preserved (append-only lineage)."""
+        from PySide6.QtGui import QTextCursor
+        from engine.audio_provenance import coverage_counts
+        text, blocks, paras = self.make_blocks_and_text(4)
+        self.scene.expected_audio_slots = self.slots_for_blocks(blocks)
+        self.scene.audio_assets = [
+            self.direct_asset("blk01:1", 1),
+            self.direct_asset("blk02:1", 2),
+            self.direct_asset("blk03:1", 3),
+        ]
+        self.load_editor(text, blocks)
+        self.assertEqual(coverage_counts(self.scene), (3, 4))
+        # ONE selection spanning Blocks 2 AND 3 — a single multi-block
+        # deletion through the P3.44.9 offset transformer.
+        ed = self.win._editor._editor
+        cur = ed.textCursor()
+        cur.setPosition(blocks[1].start_offset)
+        cur.setPosition(blocks[2].end_offset,
+                        QTextCursor.MoveMode.KeepAnchor)
+        ed.setTextCursor(cur)
+        cur.removeSelectedText()
+        _process(30)
+        surviving = self.win._editor.block_manager.blocks
+        self.assertEqual([b.id for b in surviving], ["blk01", "blk04"])
+        # Regenerate the Batch queue over the CURRENT text (review mode:
+        # jobs queue up without running). Explicit labels keep the
+        # deleted blocks' labels ("Block 2"/"Block 3") reserved — they
+        # must never appear in any later Combine message.
+        self.start_long(
+            self.parts_for_blocks(surviving, [paras[0], paras[3]],
+                                  labels=["Block 1", "Block 4"]),
+            review=True)
+        self.assertEqual(
+            [s["slot_id"] for s in self.scene.expected_audio_slots],
+            ["blk01:1", "blk04:1"],
+            "the recorded structure must match the current text")
+        dlg = self.dialog()
+        self.assertEqual(
+            [j.slot_id for j in dlg._manager.jobs],
+            ["blk01:1", "blk04:1"],
+            "the queue holds generation items for the CURRENT blocks only")
+        self.assertEqual(
+            [j.source_block_id for j in dlg._manager.jobs],
+            ["blk01", "blk04"])
+        self.assertNotIn("missing from the queue",
+                         dlg._coverage_label.text())
+        # Combine on the current structure: the ONLY uncovered slot is
+        # Block 4 (still in the text — legitimate missing audio); the
+        # deleted Blocks 2/3 are NEVER demanded despite their orphaned
+        # historical audio.
+        ok, msg = self.combine_warning()
+        self.assertFalse(ok)
+        self.assertIn("'Block 4'", msg)
+        self.assertNotIn("'Block 2'", msg)
+        self.assertNotIn("'Block 3'", msg)
+        self.assertNotIn(STALE_MARKER, msg)
+        # Generate the missing current part; the historical assets for
+        # the deleted blocks are preserved (append-only), the new asset
+        # joins, and Combine succeeds with exactly the current slots.
+        dlg._check_states = _check_dict(dlg, [False, True])
+        dlg._on_start()
+        self.wait_batch()
+        self.assertEqual(len(self.scene.audio_assets), 4,
+                         "append-only lineage: the deleted blocks' audio "
+                         "history is never deleted to silence a warning")
+        self.assertEqual(coverage_counts(self.scene), (2, 2))
+        ok2, msg2 = self.combine_warning()
+        self.assertTrue(ok2, msg2)
+        entry = self.scene.combined_outputs[0]
+        self.assertEqual(entry["slot_count"], 2)
+        self.assertEqual([s["slot_id"] for s in entry["sources"]],
+                         ["blk01:1", "blk04:1"])
+
 
 # ===========================================================================
 # 9) Scenario D — delete and recreate text with repeated phrases
@@ -995,6 +1081,92 @@ class TestScenarioELoadRoundtrip(_MWHarness):
             os.path.join(self.tmp, a["output_path"]))
             for a in lscene.audio_assets),
             "valid generated audio must survive the load untouched")
+
+    def test_real_disk_save_reload_preserves_contract(self):
+        """P3.45.6 closeout — user scenario D: a REAL ProjectManager disk
+        save → reload round-trip keeps the exact contract.
+
+        The deleted block does NOT reappear; the valid audio and its
+        slot_id / generation_run / part_version append-only lineage are
+        NOT lost; Combine classifies the reloaded state honestly (the
+        stale reference is named with the correct remedy, nothing is
+        mutated); and after regenerating the structure over the reloaded
+        text the valid audio still joins and Combine succeeds."""
+        from engine.project_manager import ProjectManager
+        from engine.audio_provenance import coverage_counts
+        text, blocks, paras = self.make_blocks_and_text(3)
+        # A post-deletion save: 2 blocks persisted, 3 slots recorded,
+        # 2 assets — the stale reference lives in the project file.
+        self.scene.text = "\n".join(paras[:2])
+        self.scene.narration_blocks = [b.to_dict() for b in blocks[:2]]
+        self.scene.expected_audio_slots = self.slots_for_blocks(blocks)
+        self.scene.audio_assets = [
+            self.direct_asset("blk01:1", 1),
+            self.direct_asset("blk02:1", 2),
+        ]
+        runs_before = {a["slot_id"]: a["generation_run"]
+                       for a in self.scene.audio_assets}
+        # REAL disk round-trip through the authoritative persistence
+        # (a FRESH manager instance reads the file back from disk).
+        pm_dir = os.path.join(self.tmp, "projects")
+        ProjectManager(pm_dir).save_project(self.project)
+        loaded = ProjectManager(pm_dir).get_project(self.project.id)
+        self.assertIsNotNone(loaded)
+        lscene = loaded.scenes[0]
+        # The deleted block does NOT reappear; the stale slot reference
+        # survives truthfully (the load never rewrites history).
+        self.assertEqual([b["id"] for b in lscene.narration_blocks],
+                         ["blk01", "blk02"])
+        self.assertEqual(
+            [s["slot_id"] for s in lscene.expected_audio_slots],
+            ["blk01:1", "blk02:1", "blk03:1"])
+        # Valid audio is NOT lost; the frozen lineage contracts survive.
+        self.assertEqual(
+            [a["slot_id"] for a in lscene.audio_assets],
+            ["blk01:1", "blk02:1"])
+        self.assertEqual(
+            [a["part_version"] for a in lscene.audio_assets], [1, 1])
+        self.assertEqual(
+            {a["slot_id"]: a["generation_run"]
+             for a in lscene.audio_assets},
+            runs_before)
+        self.assertTrue(all(os.path.isfile(
+            os.path.join(self.tmp, a["output_path"]))
+            for a in lscene.audio_assets))
+        self.assertEqual(coverage_counts(lscene), (2, 3))
+        # MW-level: the reloaded scene classifies honestly (fail-closed,
+        # stale reference named with the remedy, nothing mutated, the
+        # valid audio files intact).
+        self.win._active_project = loaded
+        self.win._active_scene = lscene
+        self.win._load_scene_state(lscene)
+        slots_before = list(lscene.expected_audio_slots)
+        ok, msg = self.combine_warning_for(lscene)
+        self.assertFalse(ok)
+        self.assertIn("'Block 3'", msg)
+        self.assertIn(STALE_MARKER, msg)
+        self.assertEqual(lscene.expected_audio_slots, slots_before)
+        self.assertEqual(len(lscene.audio_assets), 2)
+        # Repair on the RELOADED project: Generate Long over the current
+        # text rebuilds the structure; the valid audio still joins and
+        # Combine succeeds — no data loss, no resurrected blocks, no
+        # duplicated lineage.
+        surviving = self.win._editor.block_manager.blocks
+        self.assertEqual([b.id for b in surviving], ["blk01", "blk02"])
+        self.start_long(self.parts_for_blocks(surviving, paras[:2]),
+                        review=True)
+        self.assertEqual(
+            [s["slot_id"] for s in lscene.expected_audio_slots],
+            ["blk01:1", "blk02:1"])
+        self.assertEqual(coverage_counts(lscene), (2, 2))
+        ok2, msg2 = self.combine_warning_for(lscene)
+        self.assertTrue(ok2, msg2)
+        entry = lscene.combined_outputs[0]
+        self.assertEqual([s["slot_id"] for s in entry["sources"]],
+                         ["blk01:1", "blk02:1"])
+        self.assertEqual(len(lscene.audio_assets), 2,
+                         "the valid audio lineage is untouched by the "
+                         "regeneration — no duplicate, no deletion")
 
 
 # ===========================================================================
