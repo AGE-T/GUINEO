@@ -3210,3 +3210,33 @@ historical suites re-validated green; validators re-run.
 - The pre-existing P3.45.3 residual (Re-detect replaces ids without
   re-materialising slots — "Unlinked part" chips) remains OPEN and
   untouched: this addendum does not change slot writing.
+
+## P3.45.7 round — success-icon artwork swap (ok3.png, verbatim)
+
+### P3.45.7 — replace the ok2 success artwork with the user-supplied ok3.png; NO transparency processing: CLOSED
+
+**Instruction**: use the newly supplied logo on the
+confirmation/positive-feedback windows in place of ok2.png, and do
+not modify its transparency in any way.
+
+**Resolution**: `assets/icons/ok3.png` (236×234 RGBA, circular
+monochrome badge with the GUINEO mascot; transparency ALREADY
+prepared in the file — corners and the region outside the circle
+fully transparent, genuine anti-aliased partial-alpha edges, max
+alpha 254) ships VERBATIM: byte-identical to the uploaded artwork,
+pinned by a SHA-256 regression in
+`tests/test_p3_45_6_closeout_notification_icon.py`. The ok2 pair
+(`ok2.png` + `ok2_transparent.png`) is RETIRED and no longer ships.
+The one common path (`FeedbackDialog.information`) is unchanged —
+APP_ROOT-relative resolution, 48px aspect-preserved box, DPR-aware,
+cached, stock-icon fallback — so all 17 positive event-feedback
+windows display the new artwork, while critical/warning/question/
+neutral dialogs keep their stock semantic icons (scope guards
+re-run green). Visual verification: VLM on a REAL modern-dark
+dialog render — icon visible, undistorted, no white rectangle
+outside the circle, layout intact; the white fill INSIDE the badge
+is part of the artwork. The ok2 round's dark-theme contrast residual
+is resolved by the artwork itself.
+
+**Residuals**: Windows-side visual confirmation stays on the owner's
+manual checklist (unchanged house residual).

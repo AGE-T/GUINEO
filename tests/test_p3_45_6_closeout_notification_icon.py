@@ -4,17 +4,21 @@
 
 Targeted regressions for the closeout correction round:
 
-1. THE SUCCESS ICON (user task 3)
-   * the packaged assets exist and keep their contract: ``ok2.png``
-     (the user-supplied artwork, verbatim — fully opaque, 140x145) and
-     ``ok2_transparent.png`` (the background-transparency prepared
-     variant actually displayed: transparent background, drawing and
-     its INTERNAL white elements pixel-identical);
+1. THE SUCCESS ICON (P3.45.7 artwork swap)
+   * the packaged asset exists and keeps its contract: ``ok3.png`` —
+     the user-supplied circular badge artwork with its transparency
+     ALREADY PREPARED in the file (236x234 RGBA, fully transparent
+     outside the circle, anti-aliased edges, max alpha 254), used
+     VERBATIM — byte-identical to the uploaded artwork, pinned by
+     SHA-256 (any accidental re-processing/re-encode fails the pin);
+     the retired P3.45.6 ``ok2.png`` / ``ok2_transparent.png`` assets
+     no longer ship;
    * ``FeedbackDialog.information`` boxes carry the packaged PNG as
      their icon — the right size (<= 48px message-box box), the aspect
-     ratio preserved, the background transparent (no white rectangle
-     on the 4 dark themes), resolved APP_ROOT-relative (works from any
-     CWD, no absolute developer path) and cached;
+     ratio preserved, the background outside the badge transparent
+     (no white rectangle on the 4 dark themes), resolved
+     APP_ROOT-relative (works from any CWD, no absolute developer
+     path) and cached;
    * the REAL message-box icon label (``qt_msgboxex_icon_label``)
      carries the pixmap — a real-widget check, not a source-text match;
    * the missing-asset fallback keeps the stock information icon;
@@ -62,59 +66,73 @@ def _process(ms=20):
 
 
 # ---------------------------------------------------------------------------
-# 1) Packaged assets
+# 1) Packaged asset
 # ---------------------------------------------------------------------------
+#: SHA-256 of the user-supplied ok3.png artwork (P3.45.7 swap). The
+#: file is used VERBATIM — its transparency is already prepared and the
+#: explicit instruction was to NOT modify it — so the packaged bytes
+#: must match the uploaded artwork exactly. Any re-save, re-encode or
+#: "transparency improvement" breaks this pin.
+_OK3_SHA256 = "cb98d65a7ccffee5b1629fcc56b7e0a256b1104aee8bf81a6bb8b2aae91d6cc3"
+
+
 class TestSuccessIconAssets(unittest.TestCase):
 
-    def test_original_artwork_packaged_verbatim(self):
-        """assets/icons/ok2.png is the user-supplied artwork: present,
-        140x145 and FULLY opaque (the untouched original)."""
+    def test_ok3_artwork_packaged_verbatim(self):
+        """assets/icons/ok3.png is the user-supplied circular badge
+        artwork: present, 236x234 RGBA, byte-identical to the upload
+        (SHA-256 pin), transparency already prepared — corners fully
+        transparent, anti-aliased edges, NO fully-opaque pixel."""
+        import hashlib
         from PySide6.QtGui import QImage
-        path = os.path.join(_ASSETS_ICONS, "ok2.png")
+        path = os.path.join(_ASSETS_ICONS, "ok3.png")
         self.assertTrue(os.path.isfile(path), "missing asset: " + path)
+        digest = hashlib.sha256(
+            open(path, "rb").read()).hexdigest()
+        self.assertEqual(digest, _OK3_SHA256,
+                         "the ok3 artwork must ship VERBATIM (byte-level "
+                         "SHA-256 pin) — any transparency re-processing "
+                         "or re-encode is a defect")
         img = QImage(path)
         self.assertFalse(img.isNull())
-        self.assertEqual((img.width(), img.height()), (140, 145))
-        alphas = {img.pixel(x, y) >> 24
-                  for y in range(img.height())
-                  for x in range(img.width())}
-        self.assertEqual(alphas, {255},
-                         "the original artwork must stay fully opaque "
-                         "(it is the verbatim reference copy)")
-
-    def test_transparent_variant_packaged_and_correct(self):
-        """assets/icons/ok2_transparent.png: transparent background
-        (corners alpha 0), drawing fully opaque and pixel-identical to
-        the original, internal white elements preserved."""
-        from PySide6.QtGui import QImage
-        orig = QImage(os.path.join(_ASSETS_ICONS, "ok2.png"))
-        var = QImage(os.path.join(_ASSETS_ICONS, "ok2_transparent.png"))
-        self.assertFalse(var.isNull())
-        self.assertEqual((var.width(), var.height()),
-                         (orig.width(), orig.height()))
-        for cx, cy in ((0, 0), (var.width() - 1, 0),
-                       (0, var.height() - 1), (var.width() - 1, var.height() - 1)):
-            self.assertEqual(var.pixelColor(cx, cy).alpha(), 0,
+        self.assertEqual((img.width(), img.height()), (236, 234))
+        # Transparency ALREADY prepared in the file: fully transparent
+        # outside the circular badge.
+        for cx, cy in ((0, 0), (img.width() - 1, 0),
+                       (0, img.height() - 1),
+                       (img.width() - 1, img.height() - 1)):
+            self.assertEqual(img.pixelColor(cx, cy).alpha(), 0,
                              "background corner must be fully transparent")
-        opaque = 0
-        internal_white = 0
-        for y in range(var.height()):
-            for x in range(var.width()):
-                vc, oc = var.pixelColor(x, y), orig.pixelColor(x, y)
-                if vc.alpha() == 255:
+        # Alpha structure of the verbatim artwork: substantial visible
+        # content at (sub-255) high alpha + genuine anti-aliased edges.
+        opaque = partial = transparent = 0
+        for y in range(img.height()):
+            for x in range(img.width()):
+                a = img.pixelColor(x, y).alpha()
+                if a == 0:
+                    transparent += 1
+                elif a == 255:
                     opaque += 1
-                    self.assertEqual(
-                        (vc.red(), vc.green(), vc.blue()),
-                        (oc.red(), oc.green(), oc.blue()),
-                        "an opaque pixel of the variant must be "
-                        "pixel-identical to the original drawing "
-                        "at ({0},{1})".format(x, y))
-                    if oc.red() > 200 and oc.green() > 200 and oc.blue() > 200:
-                        internal_white += 1
-        self.assertGreater(opaque, 5000, "the drawing must survive")
-        self.assertGreater(internal_white, 500,
-                           "internal white drawing elements (sunglass "
-                           "lenses/snout) must be preserved")
+                else:
+                    partial += 1
+        self.assertGreater(transparent, 10000,
+                           "the area outside the badge must be "
+                           "transparent")
+        self.assertGreater(partial, 1000,
+                           "anti-aliased edges must survive verbatim")
+        self.assertGreater(opaque + partial, 40000,
+                           "the badge drawing must be present")
+
+    def test_retired_ok2_assets_no_longer_ship(self):
+        """The P3.45.6 ok2 artwork pair was RETIRED by the P3.45.7 swap:
+        neither file may remain in the packaged assets (no dead artwork
+        ships in the release)."""
+        for name in ("ok2.png", "ok2_transparent.png"):
+            self.assertFalse(
+                os.path.isfile(os.path.join(_ASSETS_ICONS, name)),
+                "retired asset still present: " + name)
+        # And the displayed icon constant points at the new artwork.
+        self.assertEqual(feedback_mod._SUCCESS_ICON_FILE, "ok3.png")
 
 
 # ---------------------------------------------------------------------------
@@ -135,14 +153,15 @@ class TestSuccessIconPixmap(unittest.TestCase):
         self.assertLessEqual(pm.height(), _SUCCESS_ICON_SIZE)
         self.assertGreaterEqual(pm.width(), _SUCCESS_ICON_SIZE - 4)
         self.assertGreaterEqual(pm.height(), _SUCCESS_ICON_SIZE - 4)
-        # Aspect ratio preserved (no distortion): source 140x145.
+        # Aspect ratio preserved (no distortion): source 236x234.
         ratio = pm.width() / float(pm.height())
-        self.assertAlmostEqual(ratio, 140.0 / 145.0, delta=0.05)
+        self.assertAlmostEqual(ratio, 236.0 / 234.0, delta=0.05)
 
     def test_pixmap_background_transparent_no_white_rectangle(self):
-        """The DISPLAYED pixmap must not carry the opaque white
-        background — on the 4 dark themes it would show as an unwanted
-        white rectangle (the user-reported risk)."""
+        """The DISPLAYED pixmap must not carry an opaque background
+        OUTSIDE the circular badge — on the 4 dark themes it would show
+        as an unwanted white rectangle (the user-reported risk). The
+        white fill INSIDE the badge is part of the verbatim artwork."""
         pm = _success_icon_pixmap()
         img = pm.toImage()
         for cx, cy in ((0, 0), (img.width() - 1, 0),

@@ -28,24 +28,28 @@ Visual styling is NOT done here: the look comes from the central
 box in the application (this class and plain ``QMessageBox`` calls
 alike) stays visually consistent across all themes.
 
-P3.45.6 closeout — the success icon
------------------------------------
+P3.45.6 closeout — the success icon (P3.45.7 artwork swap)
+----------------------------------------------------------
 Every POSITIVE event-feedback dialog in the application routes through
 ``FeedbackDialog.information`` (project/scene saved, presets/voices
 exported, batch queue saved/loaded, imports and export completions).
 These dialogs used to display the stock platform ``Icon.Information``
 glyph — on the affected platforms it reads as a generic default
-exclamation — so they now display the GUINEO "OK" mascot artwork
-instead:
+exclamation — so they display the GUINEO "OK" mascot artwork instead:
 
-  * ``assets/icons/ok2.png``              — the user-supplied artwork,
-    kept VERBATIM (fully opaque, black drawing on white).
-  * ``assets/icons/ok2_transparent.png``  — the background-transparency
-    prepared variant actually displayed: the white background is removed
-    (border flood-fill + coverage-encoded alpha) so no white rectangle
-    appears on the 4 dark themes, while the drawing itself — including
-    its internal white elements (sunglass lenses, snout, finger gaps) —
-    is pixel-identical to the original.
+  * ``assets/icons/ok3.png`` — the CURRENT artwork (P3.45.7): the
+    user-supplied circular badge (aviator-sunglasses guinea pig giving
+    a thumbs-up, monochrome, thick black circular border, white fill
+    INSIDE the badge) shipped with its transparency ALREADY PREPARED —
+    236x234 RGBA, fully transparent outside the circle, anti-aliased
+    edges, no fully-opaque pixel (max alpha 254). It is used VERBATIM:
+    the application performs NO transparency processing of its own
+    (explicit user instruction for this swap — any re-processing would
+    be a defect, pinned by a byte-level SHA-256 regression).
+
+  * Historical: ``ok2.png`` + ``ok2_transparent.png`` (P3.45.6
+    closeout — opaque original + app-side flood-fill/coverage-alpha
+    preparation) were RETIRED by the P3.45.7 swap and no longer ship.
 
 The icon is resolved APP_ROOT-relative (never an absolute developer
 path), scaled into the standard 48px message-box icon box with the
@@ -82,12 +86,14 @@ from PySide6.QtWidgets import QLabel, QMessageBox, QWidget
 __all__ = ["FeedbackDialog"]
 
 # ---------------------------------------------------------------------------
-# The success icon (P3.45.6 closeout)
+# The success icon (P3.45.6 closeout; artwork swapped P3.45.7)
 # ---------------------------------------------------------------------------
 _APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-#: The displayed, background-transparency prepared variant of the
-#: user-supplied ok2.png artwork (see the module docstring).
-_SUCCESS_ICON_FILE = "ok2_transparent.png"
+#: The displayed success-icon artwork (P3.45.7): the user-supplied
+#: ok3.png circular badge, transparency ALREADY prepared in the file —
+#: used VERBATIM, no app-side transparency processing (see the module
+#: docstring).
+_SUCCESS_ICON_FILE = "ok3.png"
 #: The standard message-box icon box (logical pixels). Matches the stock
 #: icon size the Fusion style renders, so the icon column geometry and
 #: the text layout are unchanged.
@@ -150,8 +156,8 @@ class FeedbackDialog(QMessageBox):
     2. The informative label is made mouse-selectable (``Ctrl+C``-free
        path copying) — only for this class, where technical detail is
        expected; plain QMessageBox call sites are untouched.
-    3. The positive event-feedback icon: the GUINEO "OK" mascot
-       (``assets/icons/ok2_transparent.png``) replaces the stock
+    3. The positive event-feedback icon: the GUINEO "OK" mascot badge
+       (``assets/icons/ok3.png``, used verbatim) replaces the stock
        information glyph — with a graceful fallback to the stock icon
        when the asset is unavailable.
     """

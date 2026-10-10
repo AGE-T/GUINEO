@@ -4969,3 +4969,45 @@ tartalom: NINCS benne projects/, beállítás, napló vagy cache; a
 két ok2 asset BENNE van) — lásd a zárójelentést. A build külön
 commitban; keep-last-5; push után helyi HEAD == origin/main;
 munkafa tiszta. P3.45.6 ZÁRÓKORREKCIÓ ITT ÁLL MEG.
+
+P3.45.7 — SIKER-IKON GRAFIKACSERE (ok3.png, VERBATIM)
+A tulajdonos utasítása a záró audit után: a konfirmálós /
+pozitív visszajelző ablakok ikonja legyen az újonnan megadott
+ok3.png, az ok2.png kiváltásával — és a kép átlátszóságán SEMMI
+módosítást ne végezzünk (az ok2-kör app-oldali
+átlátszóság-előkészítése ennél a grafikánál NEM szabad).
+
+ASSET-TÉNYEK (programozottan + VLM-mel igazolva): ok3.png 236×234
+RGBA kör alakú monokróm badge — a GUINEO-mascot (napszemüveg,
+thumbs-up) vastag fekete körkereten belül, fehér kitöltéssel A KÖRÖN
+BELÜL (a grafika része, nem háttér-artefakt). Az átlátszóság a
+FÁJLBAN KÉSZ érkezett: a sarkok és a körön kívüli terület teljesen
+átlátszó (13 089 alpha-0 pixel; VLM: a sötét háttér a körön kívül
+tisztán átlátszik), az élek valódi részleges-alfa anti-aliasing
+(41 135 pixel), nincs teljesen fedő pixel (max alpha 254 — a fájl
+sajátossága, így marad). BYTE-SZINTŰ VERBATIM: a csomagolt fájl
+azonos a feltöltött művel (SHA-256-pin a tesztben — bármilyen
+újra-mentés, újra-kódolás vagy „átlátszóság-javítás" elbukik).
+
+VÁLTOZÁS (3 fájl, viselkedés-változás nélkül): ok3.png be; ok2.png +
+ok2_transparent.png KI (nyugdíjazva, nem szállítjuk); a
+ui/feedback.py _SUCCESS_ICON_FILE = "ok3.png" + docstringek. A
+feloldási útvonal VÁLTOZATLAN: APP_ROOT-relatív, 48px-es doboz,
+képarány-megtartás (236/234), DPR-tudatos, cache-elt, stock-ikon
+visszaesés — így mind a 17 pozitív esemény-visszajelző ablak az új
+grafikát mutatja az EGY közös útvonalon; a critical/warning/
+question/semleges ablakok stock sémantikus ikonjai változatlanok
+(scope-guard tesztek újrafuttatva, zöldek). A teszt-állomány
+asset-szerződése átírva ok3-ra (SHA-256 verbatim-pin, 236×234,
+sarok-alpha-0, részleges-alfa élek, badge-tartalom, ok2-nyugdíjazás,
+konstans-pin; képarány-pin 236/234; a „nincs fehér téglalap" őrzés
+a KÖRÖN KÍVÜLI területre vonatkozik — a körön belüli fehér kitöltés
+a művészi szándék). VIZUÁLIS ELLENŐRZÉS: VALÓDI dialógus-render
+modern-dark témával (box.grab(), 299×190) — VLM: az ikon látható,
+megfelelő méretű, nem torzult, nincs fehér téglalap a körön kívül,
+az elrendezés ép. Az ok2-kör sötét-téma kontraszt-maradványa magától
+megszűnt: a badge saját fehér kitöltése olvashatóvá teszi sötéten is.
+
+DOKUMENTÁCIÓ: docs/design/…CLOSEOUT…NOTIFICATIONS.md §7 addendum;
+OPEN_BUGS.md P3.45.7-bejegyzés (CLOSED). MARADVÁNY: a Windows-oldali
+vizuális megerősítés a tulajdonos kézi listáján marad (unchanged).

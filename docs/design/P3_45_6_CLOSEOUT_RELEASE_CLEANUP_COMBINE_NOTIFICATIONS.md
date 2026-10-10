@@ -325,3 +325,64 @@ their own project; behaviour unchanged).
   real runtime settings/logs by design; it is run with a probe that
   cleans its own artifacts afterwards (documented in the final
   report).
+
+## §7 P3.45.7 addendum — artwork swap: ok2.png → ok3.png (verbatim)
+
+Owner instruction after the P3.45.6 final audit: replace the success
+artwork on the confirmation/positive-feedback windows with the newly
+supplied `ok3.png`, and — unlike the ok2 round — do NOT perform ANY
+transparency processing on it.
+
+### §7.1 The new asset (facts, verified programmatically + VLM)
+
+`assets/icons/ok3.png`, 236×234 RGBA, byte-identical to the uploaded
+artwork (SHA-256 pinned in the test suite:
+`cb98d65a…91d6cc3`):
+
+* the artwork is a circular monochrome badge — the GUINEO mascot
+  (aviator sunglasses, thumbs-up) inside a thick black circular
+  border with a WHITE fill inside the badge;
+* the transparency is ALREADY PREPARED in the file: the four corners
+  and the whole region outside the circle are fully transparent
+  (13 089 alpha-0 pixels; VLM confirms the dark background shows
+  through cleanly outside the circle);
+* anti-aliased edges are genuine partial alpha (41 135 partial-alpha
+  pixels); there is NO fully-opaque pixel — max alpha is 254 (a
+  property of the supplied file, kept verbatim);
+* the white fill INSIDE the badge is part of the artwork design, not
+  a background artifact — on dark themes the icon reads as a circular
+  sticker badge (VLM-verified on a real modern-dark dialog render:
+  icon visible, proper size, no distortion, no white rectangle
+  outside the circle, layout intact).
+
+### §7.2 What changed (3 files) and what did NOT
+
+* `assets/icons/ok3.png` ADDED verbatim; `assets/icons/ok2.png` and
+  `assets/icons/ok2_transparent.png` REMOVED (retired — no dead
+  artwork ships).
+* `ui/feedback.py`: `_SUCCESS_ICON_FILE = "ok3.png"` + docstrings
+  updated (the module docstring now records the P3.45.7 swap and the
+  no-processing rule). The RESOLUTION PATH IS UNCHANGED:
+  APP_ROOT-relative, 48px box, aspect preserved (236/234), DPR-aware,
+  cached, stock-icon fallback. No call-site changes anywhere — the
+  17 positive event-feedback windows pick the new artwork through the
+  ONE common path automatically; errors/warnings/questions/neutral
+  notices keep stock icons (scope guards untouched).
+* `tests/test_p3_45_6_closeout_notification_icon.py`: the asset
+  contract tests rewritten for ok3 — byte-level SHA-256 verbatim pin
+  (any re-encode or "transparency improvement" fails the suite),
+  236×234 dimension pin, corner-alpha-0, partial-alpha edge presence,
+  badge-content presence, ok2-retirement pin,
+  `_SUCCESS_ICON_FILE == "ok3.png"` pin; the pixmap aspect pin
+  updated to 236/234; the no-white-rectangle pixmap check reworded
+  (the guard is about the area OUTSIDE the badge). Still 17 tests.
+
+### §7.3 Residuals
+
+* The dark-theme contrast question of the ok2 round is RESOLVED BY
+  THE ARTWORK ITSELF: the ok3 badge carries its own white fill, so
+  the drawing reads on dark themes (VLM-verified on modern-dark).
+* Windows-side visual confirmation remains on the owner's manual
+  checklist (unchanged house residual).
+* The ok2 transparency-preparation pipeline is retired with the
+  asset; nothing in the product references it anymore.
