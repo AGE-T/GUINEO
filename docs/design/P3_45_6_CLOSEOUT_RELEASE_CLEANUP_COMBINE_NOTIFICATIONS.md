@@ -386,3 +386,137 @@ artwork (SHA-256 pinned in the test suite:
   checklist (unchanged house residual).
 * The ok2 transparency-preparation pipeline is retired with the
   asset; nothing in the product references it anymore.
+
+## §8 P3.45.9 addendum — success-icon display size: 48 → 80 logical pixels
+
+Owner instruction after the P3.45.8 publication: the ok3 badge reads
+VISUALLY TOO SMALL in the real success notification window despite
+sufficient available space — increase the display target from 48 to
+80 logical pixels (the largest of the previously reviewed 48/64/80
+mock-ups; do not settle for 64 out of habit). A focused sizing
+correction, not a UI redesign: the artwork, the resolution mechanism
+and every other dialog behaviour stay untouched.
+
+### §8.1 What changed (one constant, honestly documented)
+
+`ui/feedback.py`: `_SUCCESS_ICON_SIZE = 48 → 80`. That is the ENTIRE
+product change. The mechanism is byte-for-byte the same one:
+
+* APP_ROOT-relative resolution of the VERBATIM `ok3.png` (236×234
+  RGBA; the SHA-256 byte pin and all artwork-contract regressions are
+  unchanged and re-run green — the artwork is NOT re-encoded,
+  re-cropped or otherwise processed);
+* `QPixmap.scaled(box, box, KeepAspectRatio, SmoothTransformation)`
+  — the near-square source fits the 80×80 logical box as 80 wide ×
+  ~79.3 high (never a forced per-axis stretch);
+* device-pixel-ratio aware (`round(target * dpr)` physical raster
+  carrying the devicePixelRatio, displayed at the 80 logical target);
+* cached (one resolution per process, reset hook unchanged);
+* stock-information-icon fallback when the asset is missing;
+* the same 17 positive event-feedback call sites pick the size up
+  through the ONE common path — zero call-site changes;
+  critical/warning/question/neutral dialogs keep stock semantic icons
+  (scope guards re-run green).
+
+The constant's documentation was rewritten honestly: at 80 the icon
+is deliberately LARGER than the stock Fusion message-box icon box
+(48 logical px) — the icon column grows with the badge and the dialog
+widens accordingly; the old "matches the stock icon size so the
+geometry is unchanged" rationale no longer applies and is not kept.
+
+### §8.2 Logical target vs. physical raster (the DPI distinction)
+
+The 80 px target is in LOGICAL pixels. At devicePixelRatio 1.0 the
+raster is 80×80 device px; at 2.0 it is ~160×~158 device px carrying
+`devicePixelRatio = 2.0`, still DISPLAYED at 80×~79 logical. A
+runtime render with `QT_SCALE_FACTOR=2` (real QApplication reporting
+dpr 2.0) confirmed the logical target is preserved and only the
+physical raster doubles.
+
+### §8.3 Qt rasterisation evidence (measured, pixel-level)
+
+The ideal KeepAspectRatio height of the 236×234 artwork in an 80×80
+box is 234·80/236 = 79.32 px. Measured on this exact tree:
+
+* dpr 1: the pixmap raster is **80×80** — Qt's transform machinery
+  rounds the 0.68 px remainder INTO the canvas edge; the resulting
+  rasterisation is pixel-identical to a full-box map (verified: total
+  channel delta 0 vs. an `IgnoreAspectRatio` render; a
+  uniform-transform reference differs only in the last sub-pixel
+  bottom-edge row). Residual anisotropy 0.86% — sub-pixel, invisible,
+  and IDENTICAL IN KIND to the accepted P3.45.7 behaviour (the 48px
+  round rendered an exact 48×48 raster from the same source with the
+  same rounding).
+* dpr 2: the raster is **160×158** (the same rounding lands
+  differently at device scale: 158.64 → 158).
+
+The MECHANISM never computes a per-axis stretch: it is
+`KeepAspectRatio`, unchanged since P3.45.6. The sub-pixel canvas
+rounding is Qt's raster edge behaviour, documented here so nobody
+mistakes the exact-80×80 dpr-1 raster for a forced stretch.
+
+### §8.4 Runtime verification (the acceptance criterion)
+
+A genuine `FeedbackDialog` built through the real application code
+(real entry-sequence QApplication, real theme pipeline, real
+`ok3.png`), with the representative sample content ("GUINEO" /
+"Project saved: GUINEO" / Scenes: 8, Characters: 6, Location:
+projects/sample-project/ / OK button), rendered on the offscreen
+platform (no display server in the sandbox; pixels from the real
+rendering pipeline via `grab()` of the real widget — same honest
+caveat as the P3.45.8 screenshot):
+
+| theme | dialog (logical) | icon label | pixmap (logical) |
+|---|---|---|---|
+| modern-dark | 373×190 (was 299×190 @48px) | 100×96 | 80×80 |
+| light | 384×190 | 100×96 | 80×80 |
+| modern-dark @dpr 2 | 384×190 (768×380 device) | — | 80×79 |
+
+Machine-checked: displayed pixmap at the 80 logical target on every
+theme; aspect within sub-pixel tolerance of 236/234; no clipping
+(label fits the pixmap), no overlap, no runaway expansion (height
+unchanged at 190 — the 80px icon column is still shorter than the
+text column); OK button and default unchanged. VLM inspection of
+both real renders: the badge is clearly visible and prominent
+(~25–30% of the dialog height), undistorted, no white rectangle
+outside the circle, text readable and properly wrapped, button
+properly placed, composition balanced — on BOTH themes.
+
+The dialog width growth (+74 logical px on modern-dark vs. the 48px
+round) is the intended, proportionate consequence of the larger
+badge; the height is unchanged because the text column dominates
+vertically.
+
+### §8.5 Regression tests
+
+`tests/test_p3_45_6_closeout_notification_icon.py` — 20 tests now
+(was 17; nothing weakened or removed):
+
+* kept verbatim: the ok3 SHA-256 byte pin, 236×234 + alpha-structure
+  pins, ok2-retirement + `_SUCCESS_ICON_FILE` pins, any-CWD
+  APP_ROOT-relative resolution, caching, missing-asset fallback,
+  real-icon-label wiring, warning/critical/question scope guards,
+  call-site migration pins, runtime-hygiene pins;
+* `test_pixmap_resolves_size_and_aspect` now measures LOGICAL
+  dimensions (device px ÷ devicePixelRatio);
+* NEW `test_target_is_80_logical_pixels`: pins
+  `_SUCCESS_ICON_SIZE == 80` (a revert to 48 or 64 fails) and the
+  logical 80×~79 fit;
+* NEW `test_pixmap_high_dpr_keeps_logical_target`: the high-DPI path
+  (device raster ~round(80·dpr) carrying the devicePixelRatio,
+  displayed at 80 logical);
+* NEW `test_real_dialog_layout_at_80_logical_pixels`: the REAL
+  laid-out dialog — displayed icon at the 80 logical target, no
+  clipping, label inside the dialog, bounded expansion, OK button
+  and default intact.
+
+### §8.6 Residuals
+
+* Windows-side visual confirmation stays on the owner's manual
+  checklist (unchanged house residual; no Windows rendering was
+  performed or claimed in this round).
+* The sizing-evidence renders (this section) are verification
+  artifacts kept with the round's evidence and attached to the
+  P3.45.9 GitHub Release — they are distinct from the genuine
+  application screenshot (`docs/screenshots/guineo-main-window.png`,
+  the P3.45.8 README product screenshot, which is unchanged).

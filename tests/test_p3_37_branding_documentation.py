@@ -384,15 +384,17 @@ class TestDocumentation(unittest.TestCase):
             self.assertIn(t, en, "EN file missing topic: %r" % t)
 
     def test_current_phase_documented_in_both_files(self):
-        """P3.45.8 docs round: both files document the current phase,
-        its narration-integrity scope and the release history."""
+        """P3.45.9 docs round: both files document the current phase,
+        its success-icon sizing scope and the release history."""
         en, hu = _read(README_PATH), _read(README_HU_PATH)
-        self.assertIn("What's new in P3.45.8", en)
-        self.assertIn("Újdonságok a P3.45.8-ban", hu)
+        self.assertIn("What's new in P3.45.9", en)
+        self.assertIn("Újdonságok a P3.45.9-ben", hu)
         for text in (en, hu):
+            # The previous round's integrity suite is still referenced
+            # (P3.45.8 repository-hygiene round, kept in the history).
             self.assertIn(
                 "tests/test_p3_45_8_content_identity_integrity.py", text)
-            self.assertIn("P3.45.8", text)
+            self.assertIn("P3.45.9", text)
             # The genuine application screenshot is referenced from both
             # files (P3.45.8 repository-hygiene round).
             self.assertIn("docs/screenshots/guineo-main-window.png", text)

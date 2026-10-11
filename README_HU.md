@@ -22,38 +22,31 @@ V3)** modelljére építve. Minden feldolgozás a saját gépeden történik —
 # HU | Magyar
 
 <a id="ujdonsagok"></a>
-## Újdonságok a P3.45.8-ban
+## Újdonságok a P3.45.9-ben
 
-A P3.45.8 a **narráció-integritási zárás**: a generált hang többé nem
-társítható csendben olyan szöveghez, amelyhez nem ezt generálták.
+A P3.45.9 fókuszált **sikeres-ikon méretkorrekció**: a GUINEO „OK”
+kabalajelvény a megerősítő/pozitív visszajelzési párbeszédeken mostantól
+**80 logikai pixelen** jelenik meg — a korábbi 48-nál vizuálisan túl
+kicsinek hatott annak ellenére, hogy elegendő hely állt rendelkezésre
+(a 80 az áttekintett 48/64/80 makettek közül a legnagyobb).
 
-- **Tartalom-azonosság minden generált részhez.** Minden várt
-  hang-slot és minden generált hang-asset rögzíti a `content_sha`
-  ujjlenyomatot (SHA-256 a pontos generálási prompt, a speaker és a
-  karakter fölött). Az ujjlenyomatot ugyanaz a mérvadó folyamat
-  bélyegzi, amely a részeket építi, és a projekt mentés/betöltés
-  körében változatlanul megmarad.
-- **A Re-add Missing fail-closed.** A sorok törlése utáni sorhelyreállítás
-  csak akkor hoz létre új jobot, ha a slot rögzített tartalma
-  BIZONYÍTHATÓAN egyezik az aktuális szöveggel az adott pozíción.
-  Megváltozott szöveg, megváltozott bontás, megváltozott
-  speaker/karakter, vagy ujjlenyomat nélküli örökölt struktúra esetén a
-  rendszer a Generate Long javítási utat írja ki — sosem társít
-  csendben más szövegdarabot a régi slothoz.
-- **A Scene Combine a fedett slotokat is validálja.** Egy létező hangfájl
-  többé nem bizonyíték arra, hogy a hang az aktuális narrációhoz
-  tartozik: a Combine slotonként bizonyítja, hogy a rögzített várt
-  tartalom ÉS a feloldott hang az AKTUÁLIS szöveghez tartozik. Az
-  egyértelműen bizonyítható blokk-ID-csere (pl. Re-detect változatlan
-  szövegen) kiengedéssel egyeztetődik; a lejárt, kétértelmű vagy
-  bizonyíthatatlan hang blokkolja a combine-ot a pontos indokkal és
-  javítási úttal — és a sikertelen combine sosem töröl és nem módosít
-  semmit (az append-only előzmény megmarad).
-- **35 új regressziós teszt**
-  (`tests/test_p3_45_8_content_identity_integrity.py`) rögzíti a
-  teljes forgatókönyv-mátrixot (megváltozott szöveg, elcsúsztott
-  határok, örökölt projektek, duplikátumok, kevert állapotok,
-  javítás-után-combine) a valódi alkalmazáslogikán át.
+- **Egy konstans változott.** `ui/feedback.py::_SUCCESS_ICON_SIZE`:
+  48 → 80 logikai pixel. Maga a grafika érintetlen — byte-azonos
+  ok3.png (SHA-256 pin) —, és a feloldási mechanizmus változatlan:
+  méretarány megtartva (a 236×234 jelvény 80×~79-ként jelenik meg,
+  sosem nyújtva), nagy-DPI-tudatos (a fizikai raszter 2× skálánál
+  duplázódik, a megjelenített logikai méret 80 marad), cache-elt,
+  a stock-ikon fallback érintetlen.
+- **A valódi párbeszéden futásidejű ellenőrizve** modern-dark és light
+  témán, plusz egy 2× kijelzőskálás renderen: a jelvény tisztán
+  hangsúlyos, nem torzult, semmi nem vágódik le és nem fed át, a
+  párbeszéd magassága változatlan, az OK gomb pontosan a régi módon
+  viselkedik. A hiba/figyelmeztetés/kérdés és semleges párbeszédek
+  stock szemantikus ikonjai változatlanok.
+- **3 új regressziós teszt** a
+  `tests/test_p3_45_6_closeout_notification_icon.py`-ban (most 20):
+  a 80 logikai pixel célszint pin (48/64-re visszavétel elbukik), a
+  nagy-DPI logikai cél, és a valódi kinézett párbeszédgeometria.
 
 Régebbi kiadási jegyzetek: minden fázis teljes implementációs
 jegyzőkönyve a `docs/design/` mappában és a dátumozott történet a
@@ -62,7 +55,7 @@ táblázat összefoglalja a közeli fázisokat.
 
 ## Tartalom
 
-1. [Újdonságok a P3.45.8-ban](#ujdonsagok)
+1. [Újdonságok a P3.45.9-ben](#ujdonsagok)
 2. [Mi a GUINEO?](#mi-a-guineo)
 3. [Telepítés](#telepítés)
 4. [Frissítés](#frissítés)
@@ -128,7 +121,7 @@ verziót), NVIDIA GPU CUDA-támogatással, kb. 12 GB szabad lemezterület,
 internetkapcsolat az első futtatáshoz.
 
 1. Töltsd le a legújabb kiadás ZIP-jét
-   (`GUINEO_P3.45.8_current.zip`) a tároló
+   (`GUINEO_P3.45.9_current.zip`) a tároló
    [Kiadások oldaláról](https://github.com/AGE-T/GUINEO/releases) vagy a
    [GitHub-tároló](https://github.com/AGE-T/GUINEO) `releases/` mappájából,
    és csomagold ki a GUINEO mappát tetszőleges helyre (pl. `C:\GUINEO`).
@@ -707,8 +700,8 @@ a Help → About ablakban látszik. Az About emellett a teljes környezetet
 mutatja (Python, PyTorch, Transformers, Qt, CUDA, GPU, modell, pontosság),
 és **Copy Debug Info** gombot ad.
 
-A jelenlegi fejlesztési fázis a **P3.45.8** (Narráció-Integritási
-Zárás) — lásd [Kiadástörténet](#kiadasok).
+A jelenlegi fejlesztési fázis a **P3.45.9** (Sikeres-Ikon Méretezése)
+— lásd [Kiadástörténet](#kiadasok).
 
 <a id="kiadasok"></a>
 ## Kiadástörténet
@@ -720,7 +713,8 @@ történet a [`DEVELOPMENT_LOG.txt`](DEVELOPMENT_LOG.txt) fájlban található,
 
 | Fázis | Téma |
 |---|---|
-| **P3.45.8** (aktuális) | Narráció-integritási zárás: `content_sha` ujjelenyomatok, fail-closed Re-add Missing + Scene Combine fedett-slot validáció, 35 tesztes csomag |
+| **P3.45.9** (aktuális) | Sikeres-ikon megjelenítési méret 48 → 80 logikai px (fókuszált korrekció; grafika verbatim, mechanizmus változatlan; 20 tesztes ikoncsomag) |
+| P3.45.8 | Narráció-integritási zárás: `content_sha` ujjelenyomatok, fail-closed Re-add Missing + Scene Combine fedett-slot validáció; `tests/test_p3_45_8_content_identity_integrity.py` (35 regresszió) |
 | P3.45.7 | Sikeres-ikon grafikacsere (ok3 jelvény, verbatim) |
 | P3.45.6 | Végső stabilitás és narráció-integritás: stop-verseny, blokk-tartomány kapu, indítási visszaállítás, gutter-elrendezés, előnézet/token-paritás; kiadástisztítás, Combine A–D regressziók, értesítési sikeres-ikon |
 | P3.44.5 | Stabilizáció / integritás: Batch-ablak életciklus-javítás (B+D), blokk-tudatos proveniencia-párosítás, 29 tesztes regressziós csomag |

@@ -19,34 +19,29 @@ happens on your machine — no cloud, no telemetry.
 <a id="english"></a>
 
 <a id="whats-new"></a>
-## What's new in P3.45.8
+## What's new in P3.45.9
 
-P3.45.8 is the **narration-integrity closure**: generated audio can no
-longer be silently associated with text it was not generated for.
+P3.45.9 is a focused **success-icon sizing correction**: the GUINEO
+"OK" mascot badge on every confirmation/positive-feedback dialog now
+displays at **80 logical pixels** — it read as too small at the previous
+48 despite sufficient available space (80 is the largest of the reviewed
+48/64/80 mock-ups).
 
-- **Content identity for every generated part.** Each expected audio slot
-  and each generated audio asset now records a `content_sha` fingerprint
-  (SHA-256 over the exact generation prompt, speaker and character). The
-  fingerprint is stamped by the same authoritative pipeline that builds
-  the parts and survives project save/load unchanged.
-- **Re-add Missing fails closed.** Repairing the batch queue after removed
-  rows only re-creates a job when the slot's recorded content PROVABLY
-  matches the current text at that position. Changed text, changed
-  decomposition, a changed speaker/character, or a legacy structure without
-  fingerprints is reported with the Generate Long remedy — never silently
-  attached to a different text slice.
-- **Scene Combine validates covered slots too.** An existing audio file is
-  no longer treated as proof that the audio belongs to the current
-  narration: Combine proves, per slot, that the recorded expected content
-  AND the resolved audio match the CURRENT text. A uniquely matching
-  block-ID replacement (e.g. Re-detect over unchanged text) is reconciled;
-  stale, ambiguous or unproven audio blocks the combine with the exact
-  reason and remedy — and a failed combine never deletes or mutates
-  anything (append-only history is preserved).
-- **35 new regression tests**
-  (`tests/test_p3_45_8_content_identity_integrity.py`) pin the full scenario
-  matrix (changed text, shifted boundaries, legacy projects, duplicates,
-  mixtures, repair-then-combine) through the real application logic.
+- **One constant changed.** `ui/feedback.py::_SUCCESS_ICON_SIZE`: 48 → 80
+  logical pixels. The artwork itself is untouched — byte-identical ok3.png
+  (SHA-256 pinned) — and the resolution mechanism is unchanged: aspect
+  preserved (the 236×234 badge renders as 80×~79, never stretched),
+  high-DPI aware (the physical raster doubles at 2× scaling, the displayed
+  logical size stays 80), cached, with the stock-icon fallback intact.
+- **Verified on the real dialog at runtime** on the modern-dark and light
+  themes plus a 2× display-scaling render: the badge is clearly prominent,
+  undistorted, nothing clips or overlaps, the dialog height is unchanged,
+  and the OK button behaves exactly as before. Error/warning/question and
+  neutral dialogs keep their stock semantic icons.
+- **3 new regression tests** in
+  `tests/test_p3_45_6_closeout_notification_icon.py` (now 20): the 80
+  logical-pixel target pin (a revert to 48/64 fails), the high-DPI logical
+  target, and the real laid-out dialog geometry.
 
 Older release notes: every phase has its full implementation record under
 `docs/design/` and the dated history in `DEVELOPMENT_LOG.txt`; the
@@ -54,7 +49,7 @@ Older release notes: every phase has its full implementation record under
 
 ## Contents
 
-1. [What's new in P3.45.8](#whats-new)
+1. [What's new in P3.45.9](#whats-new)
 2. [What is GUINEO?](#what-is-guineo)
 3. [Installation](#installation)
 4. [Updating](#updating)
@@ -118,7 +113,7 @@ first run and works offline afterwards.
 version), an NVIDIA GPU with CUDA support, about 12 GB of free disk space,
 and an internet connection for the first run.
 
-1. Download the latest release ZIP (`GUINEO_P3.45.8_current.zip`) from the
+1. Download the latest release ZIP (`GUINEO_P3.45.9_current.zip`) from the
    repository's [Releases page](https://github.com/AGE-T/GUINEO/releases) or
    the `releases/` folder of the
    [GitHub repository](https://github.com/AGE-T/GUINEO) and extract the
@@ -705,7 +700,7 @@ status bar and the Help → About dialog. About also displays the full
 environment (Python, PyTorch, Transformers, Qt, CUDA, GPU, model,
 precision) and offers a **Copy Debug Info** button.
 
-The current development phase is **P3.45.8** (Narration-Integrity Closure)
+The current development phase is **P3.45.9** (Success-Icon Sizing)
 — see [Release history](#release-history).
 
 <a id="release-history"></a>
@@ -718,7 +713,8 @@ folder on [GitHub](https://github.com/AGE-T/GUINEO).
 
 | Phase | Focus |
 |---|---|
-| **P3.45.8** (current) | Narration-integrity closure: `content_sha` fingerprints, fail-closed Re-add Missing + Scene Combine covered-slot validation, 35-test suite |
+| **P3.45.9** (current) | Success-icon display size 48 → 80 logical px (focused correction; artwork verbatim, mechanism unchanged; 20-test icon suite) |
+| P3.45.8 | Narration-integrity closure: `content_sha` fingerprints, fail-closed Re-add Missing + Scene Combine covered-slot validation; `tests/test_p3_45_8_content_identity_integrity.py` (35 regressions) |
 | P3.45.7 | Success-icon artwork swap (ok3 badge, verbatim) |
 | P3.45.6 | Final stability & narration integrity: stop race, block-range gate, startup restoration, gutter layout, preview/token parity; release cleanup, Combine A–D regressions, notification success icon |
 | P3.44.5 | Stabilisation / integrity: batch-window lifecycle fix (Issues B+D), block-aware provenance join, 29-test regression suite |

@@ -3295,3 +3295,33 @@ screenshot record).
 - The tests/conftest.py logging/test-isolation issue remains OPEN and
   untouched (explicitly out of scope for this round per the task's
   scope rule).
+
+## P3.45.9 round — success-icon display size
+
+### P3.45.9 — the ok3 success badge renders too small (48 logical px) despite available space: CLOSED
+
+**Reported problem (owner instruction)**: the ok3.png logo is
+visually too small in the actual success notification window even
+though sufficient space is available; the preferred design is the
+largest of the previously reviewed mock-ups (80 logical pixels — not
+the 64 px compromise).
+
+**Resolution**: ONE constant changed —
+`ui/feedback.py::_SUCCESS_ICON_SIZE`, 48 → 80 LOGICAL pixels. The
+existing mechanism is untouched (APP_ROOT-relative verbatim ok3
+resolution, KeepAspectRatio fit of the 236×234 artwork as 80×~79.3,
+devicePixelRatio-aware raster, cache, stock-icon fallback); the
+artwork itself is byte-identical (SHA-256 pin re-run green — no
+re-encode, no alpha change). Verified on the REAL dialog at runtime
+on modern-dark and light themes (plus a dpr-2 render): displayed
+pixmap at the 80 logical target, aspect preserved to sub-pixel, no
+clipping/overlap/runaway expansion (dialog height unchanged), OK
+button and modality untouched; VLM-verified prominent and balanced
+on both themes. Regression suite grown 17 → 20 tests (target-size
+pin, high-DPI logical pin, real-dialog layout pin); full battery
+and all validators green. Logical-vs-physical distinction and
+Qt's sub-pixel canvas rounding (80×80 raster at dpr 1, 160×158 at
+dpr 2) documented in the design record §8.
+
+**Residuals**: Windows-side visual confirmation stays on the owner's
+manual checklist (unchanged house residual).

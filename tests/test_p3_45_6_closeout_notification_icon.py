@@ -14,11 +14,14 @@ Targeted regressions for the closeout correction round:
      the retired P3.45.6 ``ok2.png`` / ``ok2_transparent.png`` assets
      no longer ship;
    * ``FeedbackDialog.information`` boxes carry the packaged PNG as
-     their icon — the right size (<= 48px message-box box), the aspect
-     ratio preserved, the background outside the badge transparent
-     (no white rectangle on the 4 dark themes), resolved
-     APP_ROOT-relative (works from any CWD, no absolute developer
-     path) and cached;
+     their icon — the right size (the P3.45.9 80 LOGICAL pixel target,
+     see ``_SUCCESS_ICON_SIZE``), the aspect ratio preserved, the
+     background outside the badge transparent (no white rectangle on
+     the 4 dark themes), resolved APP_ROOT-relative (works from any
+     CWD, no absolute developer path) and cached; the logical target
+     is pinned explicitly (a revert to 48/64 fails) including the
+     high-DPI path (device raster ``round(target * dpr)`` px carrying
+     the devicePixelRatio, displayed at 80 logical);
    * the REAL message-box icon label (``qt_msgboxex_icon_label``)
      carries the pixmap — a real-widget check, not a source-text match;
    * the missing-asset fallback keeps the stock information icon;
@@ -149,13 +152,78 @@ class TestSuccessIconPixmap(unittest.TestCase):
         pm = _success_icon_pixmap()
         self.assertIsNotNone(pm)
         self.assertFalse(pm.isNull())
-        self.assertLessEqual(pm.width(), _SUCCESS_ICON_SIZE)
-        self.assertLessEqual(pm.height(), _SUCCESS_ICON_SIZE)
-        self.assertGreaterEqual(pm.width(), _SUCCESS_ICON_SIZE - 4)
-        self.assertGreaterEqual(pm.height(), _SUCCESS_ICON_SIZE - 4)
+        # LOGICAL dimensions (device px / devicePixelRatio) — the
+        # P3.45.9 target is a logical 80px box; the device raster may
+        # differ by Qt's sub-pixel canvas rounding (80x80 at dpr 1,
+        # 160x158 at dpr 2 — both documented in the design record §8).
+        dpr = float(pm.devicePixelRatio()) or 1.0
+        lw = pm.width() / dpr
+        lh = pm.height() / dpr
+        self.assertLessEqual(lw, _SUCCESS_ICON_SIZE + 0.01)
+        self.assertLessEqual(lh, _SUCCESS_ICON_SIZE + 0.01)
+        self.assertGreaterEqual(lw, _SUCCESS_ICON_SIZE - 4)
+        self.assertGreaterEqual(lh, _SUCCESS_ICON_SIZE - 4)
         # Aspect ratio preserved (no distortion): source 236x234.
         ratio = pm.width() / float(pm.height())
         self.assertAlmostEqual(ratio, 236.0 / 234.0, delta=0.05)
+
+    def test_target_is_80_logical_pixels(self):
+        """P3.45.9 sizing correction pin: the success icon target IS
+        80 logical pixels (48 read as too small despite available
+        space; 80 is the owner-selected largest reviewed mock-up). A
+        revert to 48 — or a drift to any other value — fails here."""
+        self.assertEqual(_SUCCESS_ICON_SIZE, 80)
+        pm = _success_icon_pixmap()
+        self.assertIsNotNone(pm)
+        dpr = float(pm.devicePixelRatio()) or 1.0
+        # Fitted into the 80x80 box with KeepAspectRatio: the width IS
+        # the target (the 236px source edge is the limiting one), the
+        # height follows the near-square source aspect (234/236 ->
+        # 79.32 ideal; Qt rounds the raster canvas, hence [78.5, 80]).
+        self.assertAlmostEqual(pm.width() / dpr, 80.0, delta=0.5)
+        self.assertGreaterEqual(pm.height() / dpr, 78.5)
+        self.assertLessEqual(pm.height() / dpr, 80.0)
+        # Not stretched to force both dimensions to exactly 80: the
+        # mechanism is KeepAspectRatio; the measured raster aspect
+        # stays within a sub-pixel tolerance of the source ratio.
+        self.assertAlmostEqual(pm.width() / float(pm.height()),
+                               236.0 / 234.0, delta=0.02)
+
+    def test_pixmap_high_dpr_keeps_logical_target(self):
+        """High-DPI path: with a 2.0 devicePixelRatio the pixmap is a
+        ~160px DEVICE raster carrying devicePixelRatio 2.0 — displayed
+        at the same 80 logical pixel target (physical pixels double,
+        logical size unchanged). Simulated by stubbing the application
+        instance the resolver consults."""
+        from unittest.mock import patch
+        from PySide6.QtGui import QGuiApplication
+
+        class _FakeApp:
+            def devicePixelRatio(self):
+                return 2.0
+
+        with patch.object(QGuiApplication, "instance",
+                          return_value=_FakeApp()):
+            _reset_success_icon_cache()
+            try:
+                pm = _success_icon_pixmap()
+                self.assertIsNotNone(pm)
+                dpr = float(pm.devicePixelRatio())
+                self.assertAlmostEqual(dpr, 2.0, delta=0.01,
+                                       msg="devicePixelRatio must be "
+                                           "recorded on the pixmap")
+                # Device raster ~ round(80 * 2) = 160 (Qt's sub-pixel
+                # canvas rounding may give 158-160 for the height).
+                self.assertIn(pm.width(), (159, 160))
+                self.assertIn(pm.height(), (158, 159, 160))
+                # The DISPLAYED (logical) size stays the 80px target.
+                self.assertAlmostEqual(pm.width() / dpr, 80.0, delta=0.5)
+                self.assertGreaterEqual(pm.height() / dpr, 78.5)
+                self.assertLessEqual(pm.height() / dpr, 80.0)
+                self.assertAlmostEqual(pm.width() / float(pm.height()),
+                                       236.0 / 234.0, delta=0.02)
+            finally:
+                _reset_success_icon_cache()
 
     def test_pixmap_background_transparent_no_white_rectangle(self):
         """The DISPLAYED pixmap must not carry an opaque background
@@ -240,6 +308,54 @@ class TestFeedbackDialogIcon(unittest.TestCase):
         box.close()
         box.deleteLater()
         _process()
+
+    def test_real_dialog_layout_at_80_logical_pixels(self):
+        """P3.45.9 acceptance, on the REAL laid-out dialog: the icon
+        label displays the pixmap at the 80 logical pixel target with
+        no clipping, no overlap with the text column, no runaway
+        dialog expansion, and the OK button survives the wider icon
+        column (runtime evidence mirrors the render verification in
+        the design record §8)."""
+        box = self._box()
+        box.show()
+        _process(40)
+        try:
+            labels = [l for l in box.findChildren(QLabel)
+                      if l.objectName() == "qt_msgboxex_icon_label"]
+            self.assertEqual(len(labels), 1)
+            label = labels[0]
+            label_pm = label.pixmap()
+            self.assertIsNotNone(label_pm)
+            self.assertFalse(label_pm.isNull())
+            dpr = float(label_pm.devicePixelRatio()) or 1.0
+            logical_w = label_pm.width() / dpr
+            self.assertAlmostEqual(logical_w, 80.0, delta=0.5,
+                                   msg="displayed icon must sit at the "
+                                       "80 logical px target")
+            # No clipping: the laid-out label fits the pixmap's logical
+            # width (its content box, padding included).
+            self.assertGreaterEqual(label.width(), int(logical_w),
+                                    "icon label narrower than the "
+                                    "pixmap — clipping")
+            self.assertLessEqual(label.height(), 200,
+                                 "icon column exploded vertically")
+            # The label sits fully inside the dialog.
+            self.assertGreaterEqual(label.x(), 0)
+            self.assertGreaterEqual(label.y(), 0)
+            self.assertLessEqual(label.x() + label.width(),
+                                 box.width())
+            # No runaway expansion (the 48px round rendered ~300 wide;
+            # the 80px target legitimately widens it, bounded here).
+            self.assertLess(box.width(), 1000)
+            self.assertLess(box.height(), 600)
+            # Buttons and default survive the wider icon column.
+            buttons = box.buttons()
+            self.assertEqual([b.text() for b in buttons], ["OK"])
+            self.assertIs(box.defaultButton(), buttons[0])
+        finally:
+            box.close()
+            box.deleteLater()
+            _process()
 
     def test_missing_asset_falls_back_to_stock_icon(self):
         """Non-fatal-asset house rule: when the PNG is unavailable the

@@ -5122,3 +5122,112 @@ belépési úton zöld. A korrekt, deduplikált tesztszám-meghatározás
 gyűjtés-újraköltéssel igazolva (pytest --collect-only: 1919).
 
 P3.45.8 ITT ÁLL MEG.
+
+P3.45.9 — SIKER-ÉRTESÍTÉS IKONMÉRET: 48 -> 80 logikai pixel
+(2026-10-11)
+
+OKFELÜTI UTASÍTÁS: az ok3 jelvény a valódi siker-értesítési ablakban
+vizuálisan TÚL KICSI, annak ellenére, hogy elegendő hely áll
+rendelkezésre; a preferált tervezet a korábban áttekintett
+makettek közül a LEGNAGYOBB (80 logikai pixel — ne 64-re
+visszakozni). Fókuszált méretkorrekció, nem UI-újratervezés.
+
+TERMÉKVÁLTOZÁS: EGY konstans — ui/feedback.py::_SUCCESS_ICON_SIZE:
+48 -> 80. A mechanizmus byte-szinten változatlan: APP_ROOT-relatív
+verbatim ok3.png feloldás (SHA-256 byte-pin újrazöld — az artwork
+NEM lett újrakódolva/átszínkezelve/vágva), KeepAspectRatio illesztés
+(236x234 -> 80 x ~79.3 logikai, sosem tengelyenkénti nyújtás),
+devicePixelRatio-tudó raszter (round(80*dpr) fizikai px, a
+devicePixelRatio a pixmapon — megjelenítés továbbra is 80 logikai),
+cache, stock-ikon fallback. A 17 pozitív esemény-visszajelzési ablak
+az EGY közös úton keresztül veszi fel az új méretet — nulla
+hívásihely-változás; a critical/warning/question/semleges párbeszéd
+stock szemantikus ikonjai változatlanok (scope-guardok újrazöld).
+
+A konstans dokumentációja őszintén átírva: 80-nál az ikon SZÁNDÉKOSAN
+nagyobb a stock Fusion üzenetdoboz-ikonmezőnél (48 logikai px) — az
+ikon-oszlop a jelvénnyel együtt nő, a párbeszéd megfelelően szélesedik;
+a régi „a stock ikonméretet egyezteti, ezért a geometria változatlan"
+indoklás már NEM áll, ezért elhagyva.
+
+LOGIKAI CÉL vs. FIZIKAI RASZTER (DPI-különbség): a cél 80 LOGIKAI
+pixel. dpr 1,0-nál a raszter 80x80 eszközpx; dpr 2,0-nál ~160x~158
+eszközpx, a pixmapon devicePixelRatio=2,0 — a megjelenített méret
+továbbra is 80x~79 logikai. Valódi QT_SCALE_FACTOR=2-es futtatással
+(EZREDI QApplication, dpr 2,0) ellenőrizve: a logikai cél megmarad,
+csak a fizikai raszter duplázódik.
+
+QT-RASZTEREZÉSI BIZONYÍTÉK (pixszintű, ezen a fán mérve): a
+KeepAspectRatio ideális magassága 234*80/236 = 79,32 px. dpr 1-nél a
+raszter 80x80 — a Qt transzformációs gépezete a 0,68 px töredéket a
+vászon szélébe kerekíti; a raszterezés pixelpontosan megegyezik a
+teljes-vászon leképezéssel (csatorna-delta 0 egy IgnoreAspectRatio
+renderhez képest; az egységes-transzformációs referenciától csak az
+utolsó altételes alsóél-sor különbözik). Maradék anizotrópia 0,86% —
+altételes, láthatatlan, és FAJTÁJÁBAN AZONOS az elfogadott P3.45.7
+viselkedéssel (a 48 px-es kör is pontos 48x48 rasztert adott ugyanettől
+a kerekítéstől). dpr 2-nél a raszter 160x158 (158,64 -> 158). A
+MECHANIZMUS sosem számol tengelyenkénti nyújtást — a altételes
+vászonkerekítés a Qt raszterél-viselkedése, a tervdokumentum §8-ban
+dokumentálva, hogy senki ne tévesse a pontos 80x80-as dpr-1 rasztert
+kényszerített nyújtásra.
+
+FUTÁSIDEJŰ ELLENŐRZÉS (elfogadási kritérium): VALÓDI FeedbackDialog a
+valódi alkalmazáskódon keresztül (valódi belépési-sorozat QApplication,
+valódi témavezeték, valódi ok3.png) a reprezentatív mintatartalommal
+(GUINEO / Project saved: GUINEO / Scenes: 8, Characters: 6, Location:
+projects/sample-project/ / OK gomb), offscreen platformon (a sandboxban
+nincs használható megjelenítő-kiszolgáló; a pixelek a valódi
+renderelési vezetékről származnak — ugyanaz az őszinte kiegészítés,
+mint a P3.45.8 screenshotnál):
+  modern-dark  373x190 logikai (48 px-nél 299x190 volt) — ikon-címke
+              100x96, pixmap 80x80 logikai;
+  light        384x190 logikai — ugyanaz az ikongeometria;
+  modern-dark @dpr2  384x190 logikai (768x380 eszköz) — pixmap 80x79
+              logikai (160x158 eszköz @ 2,0).
+Gép ellenőrizte: a megjelenített pixmap minden témánál a 80 logikai
+célon; méretarány a 236/234-től altételes tolerancián belül; nincs
+levágás (a címke befogadja a pixmapot), nincs átfedés, nincs
+szabálytalan tágulás (a magasság változatlanul 190 — a 80 px-es
+ikon-oszlop továbbra is rövidebb a szövegoszlopnál); az OK gomb és a
+default változatlan. VLM-ellenőrzés mindkét valódi renderen: a jelvény
+világosan látható és KITŰNŐ (~25-30% a párbeszéd magasságából), nem
+torzult, nincs fehér téglalap a körön kívül, a szöveg olvasható és
+megfelelően tördelt, a gomb helyén, a kompozíció kiegyensúlyozott —
+MINDKÉT témán. A párbeszéd szélességnövekedése (+74 logikai px
+modern-darkon a 48 px-es körhöz képest) a nagyobb jelvény SZÁNDÉKOLT,
+arányos következménye.
+
+REGRESSZIÓS TESZTEK: tests/test_p3_45_6_closeout_notification_icon.py
+most 20 teszt (volt 17; semmi nem gyengítve/törölve): verbatim maradt
+az ok3 SHA-256 byte-pin, a 236x234 + alfa-struktúra pinek, az
+ok2-nyugdíjazás + _SUCCESS_ICON_FILE pinek, a tetszőleges CWD-ből
+APP_ROOT-relatív feloldás, a cache, a hiányzó-asset fallback, a
+valódi ikon-címke huzalozás, a warning/critical/question scope-guardok,
+a hívásihely-migrációs pinek, a futásidejű-higiénia pinek;
+a test_pixmap_resolves_size_and_aspect innentől LOGIKAI dimenziót mér
+(eszközpx / devicePixelRatio); ÚJ test_target_is_80_logical_pixels
+(_SUCCESS_ICON_SIZE == 80 pin — a 48/64-re visszavétel elbukik — és a
+logikai 80x~79 illesztés); ÚJ test_pixmap_high_dpr_keeps_logical_target
+(a nagy-DPI út: ~round(80*dpr) eszközraszter a devicePixelRatio-val,
+megjelenítve 80 logikai); ÚJ test_real_dialog_layout_at_80_logical_pixels
+(a VALÓDI kinézett párbeszéd: megjelenített ikon a 80 logikai célon,
+nincs levágás, a címke a párbeszéden belül, korlátozott tágulás, OK
+gomb és default épek).
+
+DOKUMENTÁCIÓ: a kanonikus ikon-tervdokumentum §8 kiegészítése (mi
+változott; logikai cél vs. fizikai raszter; a Qt altételes
+vászonkerekítés pixszintű bizonyítéka; a futásidejű ellenőrzés táblázata
+mindkét témával és dpr-2-vel; tesztkönyv; maradványok); OPEN_BUGS
+P3.45.9 CLOSED bejegyzés; magyar fejlesztési napló bejegyzés; mindkét
+gyökér README aktuálissá téve (P3.45.9 újdonságok, telepítési ZIP-név,
+fázis- és kiadástörténet-táblák). A P3.45.9-es méretbizonyíték-renderEK
+ellenőrzési artifaktumok, a GitHub Release csatolmányai — KÜLÖNBEN a
+valódi alkalmazás-screenshottól (docs/screenshots/guineo-main-window.png,
+a P3.45.8-es README termékfotó, változatlan).
+
+MARADVÁNYOK: a Windows-oldali vizuális megerősítés a tulajdonos kézi
+ellenőrzőlistáján marad (változatlan házmaradvány; ebben a körben
+NEM történt és NEM állítottunk Windows-renderelést).
+
+P3.45.9 ITT ÁLL MEG.
