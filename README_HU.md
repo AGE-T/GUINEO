@@ -9,8 +9,11 @@ alkalmazás helyi beszédszintézishez, a Boson AI **Higgs TTS 3 (Higgs Audio
 V3)** modelljére építve. Minden feldolgozás a saját gépeden történik — felhő
 és telemetria nélkül.
 
+![A GUINEO főablaka](docs/screenshots/guineo-main-window.png)
+
 [🇬🇧 English documentation](README.md) ·
-[GitHub-tároló](https://github.com/AGE-T/GUINEO)
+[GitHub-tároló](https://github.com/AGE-T/GUINEO) ·
+[Kiadások](https://github.com/AGE-T/GUINEO/releases)
 
 ---
 
@@ -19,42 +22,47 @@ V3)** modelljére építve. Minden feldolgozás a saját gépeden történik —
 # HU | Magyar
 
 <a id="ujdonsagok"></a>
-## Újdonságok a P3.44.5-ben
+## Újdonságok a P3.45.8-ban
 
-A P3.44.5 egy **stabilizációs és integritási kiadás**: két függetlenül
-reprodukált hibát javít a pontos tulajdonosi pontjukon, és mindkettőt új,
-állandó regressziós tesztkészlet zárja le. Semmilyen más viselkedés nem
-változott.
+A P3.45.8 a **narráció-integritási zárás**: a generált hang többé nem
+társítható csendben olyan szöveghez, amelyhez nem ezt generálták.
 
-- **A Batch ablak életciklusa (a kutatási audit B és D jelű hibái).** Egy
-  Batch Generation ablak, amelyet bezártál és később újra megnyitottál (ugyanaz
-  a jelenet, ugyanaz a mód), korábban nem kapott többé frissítést a futó
-  kötegtől: a sorok állapota megfagyott, a Start letiltva, a Pause/Stop
-  engedélyezve maradt a befejezés után is, és az ablak csak akkor épült fel
-  újra, ha megnyomtad a Pause vagy a Stop gombot. Most az ablak minden
-  megjelenítése **idempotensen** újra létrehozza a manager figyelőjét
-  (pontosan egy figyelő, sosem duplikátum), és a teljes táblát szinkronizálja
-  a manager tényleges állapotából — az újra megnyitott ablak mindig a
-  valóságot mutatja, akkor is, ha a köteg az ablak zárva tartása alatt
-  fejeződött be. Maga a BatchManager állapotgép végig helyes volt, és nem
-  változott.
-- **Blokk-tudatos hangproveniencia párosítás.** A generált hang most a
-  jelenet várt slot-jaihoz **blokk-azonosság** (`block_id`) szerint párosul,
-  nem pusztán globális pozíció szerint. Korábban egy szerkesztés után a régi
-  hangfájl, amelynek pozíciója véletlenül egybeesett az új struktúrával,
-  csendben lefedettségnek tekintetett — a Combine Scene pedig régi hangot
-  tudott az új szöveghez összerakni. A régi hang többé nem tud más
-  struktúrájú generálási terv lefedettségének álcázni magát.
-- **29 új regressziós teszt**
-  (`tests/test_p3_44_5_stabilisation_integrity.py`) rögzíti mindkét hibát:
-  17 közülük a P3.44.5 előtti kódon elbukik, a javítás után mind a 29 zöld.
+- **Tartalom-azonosság minden generált részhez.** Minden várt
+  hang-slot és minden generált hang-asset rögzíti a `content_sha`
+  ujjlenyomatot (SHA-256 a pontos generálási prompt, a speaker és a
+  karakter fölött). Az ujjlenyomatot ugyanaz a mérvadó folyamat
+  bélyegzi, amely a részeket építi, és a projekt mentés/betöltés
+  körében változatlanul megmarad.
+- **A Re-add Missing fail-closed.** A sorok törlése utáni sorhelyreállítás
+  csak akkor hoz létre új jobot, ha a slot rögzített tartalma
+  BIZONYÍTHATÓAN egyezik az aktuális szöveggel az adott pozíción.
+  Megváltozott szöveg, megváltozott bontás, megváltozott
+  speaker/karakter, vagy ujjlenyomat nélküli örökölt struktúra esetén a
+  rendszer a Generate Long javítási utat írja ki — sosem társít
+  csendben más szövegdarabot a régi slothoz.
+- **A Scene Combine a fedett slotokat is validálja.** Egy létező hangfájl
+  többé nem bizonyíték arra, hogy a hang az aktuális narrációhoz
+  tartozik: a Combine slotonként bizonyítja, hogy a rögzített várt
+  tartalom ÉS a feloldott hang az AKTUÁLIS szöveghez tartozik. Az
+  egyértelműen bizonyítható blokk-ID-csere (pl. Re-detect változatlan
+  szövegen) kiengedéssel egyeztetődik; a lejárt, kétértelmű vagy
+  bizonyíthatatlan hang blokkolja a combine-ot a pontos indokkal és
+  javítási úttal — és a sikertelen combine sosem töröl és nem módosít
+  semmit (az append-only előzmény megmarad).
+- **35 új regressziós teszt**
+  (`tests/test_p3_45_8_content_identity_integrity.py`) rögzíti a
+  teljes forgatókönyv-mátrixot (megváltozott szöveg, elcsúsztott
+  határok, örökölt projektek, duplikátumok, kevert állapotok,
+  javítás-után-combine) a valódi alkalmazáslogikán át.
 
-Implementációs jegyzőkönyv: `docs/design/P3_44_5_STABILISATION_NOTES.md`;
-bizonyítási alap: `docs/audits/P3_44_5_RESEARCH_AUDIT.md`.
+Régebbi kiadási jegyzetek: minden fázis teljes implementációs
+jegyzőkönyve a `docs/design/` mappában és a dátumozott történet a
+`DEVELOPMENT_LOG.txt`-ben él; a [kiadástörténet](#kiadasok)
+táblázat összefoglalja a közeli fázisokat.
 
 ## Tartalom
 
-1. [Újdonságok a P3.44.5-ben](#ujdonsagok)
+1. [Újdonságok a P3.45.8-ban](#ujdonsagok)
 2. [Mi a GUINEO?](#mi-a-guineo)
 3. [Telepítés](#telepítés)
 4. [Frissítés](#frissítés)
@@ -119,10 +127,11 @@ tölti le az alkalmazás, utána internet nélkül is működik.
 verziót), NVIDIA GPU CUDA-támogatással, kb. 12 GB szabad lemezterület,
 internetkapcsolat az első futtatáshoz.
 
-1. Töltsd le a legújabb kiadás ZIP-jét (pl.
-   `releases/GUINEO_P3.44.5_current.zip` a
-   [GitHub-tárolóból](https://github.com/AGE-T/GUINEO)), és csomagold ki a
-   GUINEO mappát tetszőleges helyre (pl. `C:\GUINEO`).
+1. Töltsd le a legújabb kiadás ZIP-jét
+   (`GUINEO_P3.45.8_current.zip`) a tároló
+   [Kiadások oldaláról](https://github.com/AGE-T/GUINEO/releases) vagy a
+   [GitHub-tároló](https://github.com/AGE-T/GUINEO) `releases/` mappájából,
+   és csomagold ki a GUINEO mappát tetszőleges helyre (pl. `C:\GUINEO`).
 2. Telepítsd a **Python 3.11**-et a
    [python.org](https://www.python.org/downloads/release/python-3119/)
    oldalról — a telepítőben jelöld be az „Add Python to PATH" opciót.
@@ -698,8 +707,8 @@ a Help → About ablakban látszik. Az About emellett a teljes környezetet
 mutatja (Python, PyTorch, Transformers, Qt, CUDA, GPU, modell, pontosság),
 és **Copy Debug Info** gombot ad.
 
-A jelenlegi fejlesztési fázis a **P3.44.5** (Stabilizációs / Integritási
-Fázis 1) — lásd [Kiadástörténet](#kiadasok).
+A jelenlegi fejlesztési fázis a **P3.45.8** (Narráció-Integritási
+Zárás) — lásd [Kiadástörténet](#kiadasok).
 
 <a id="kiadasok"></a>
 ## Kiadástörténet
@@ -711,7 +720,10 @@ történet a [`DEVELOPMENT_LOG.txt`](DEVELOPMENT_LOG.txt) fájlban található,
 
 | Fázis | Téma |
 |---|---|
-| **P3.44.5** (aktuális) | Stabilizáció / integritás: Batch-ablak életciklus-javítás (B+D), blokk-tudatos proveniencia-párosítás, 29 tesztes regressziós csomag |
+| **P3.45.8** (aktuális) | Narráció-integritási zárás: `content_sha` ujjelenyomatok, fail-closed Re-add Missing + Scene Combine fedett-slot validáció, 35 tesztes csomag |
+| P3.45.7 | Sikeres-ikon grafikacsere (ok3 jelvény, verbatim) |
+| P3.45.6 | Végső stabilitás és narráció-integritás: stop-verseny, blokk-tartomány kapu, indítási visszaállítás, gutter-elrendezés, előnézet/token-paritás; kiadástisztítás, Combine A–D regressziók, értesítési sikeres-ikon |
+| P3.44.5 | Stabilizáció / integritás: Batch-ablak életciklus-javítás (B+D), blokk-tudatos proveniencia-párosítás, 29 tesztes regressziós csomag |
 | P3.44.4 | Batch futtatási-futás szemantika; visszajelzés-formátum regressziós tesztek |
 | P3.44.3 | Visszajelző párbeszédablakok javításai |
 | P3.44.2 | SFX-feldolgozási lánc javításai |

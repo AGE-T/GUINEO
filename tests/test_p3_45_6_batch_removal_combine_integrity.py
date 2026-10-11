@@ -271,12 +271,15 @@ class TestResolvedSlotSourcesClassification(_PureFactory):
         sources, blockers = resolved_slot_sources(scene, self.tmp)
         self.assertEqual(blockers, ["'Block 3' " + LEGACY_MISSING])
 
-    def test_covered_slot_never_classified(self):
+    def test_covered_slot_with_replaced_ids_blocked_without_content_evidence(self):
+        """P3.45.8 CONTRACT CHANGE (supersedes the P3.45.6-ADD
+        "covered slots are never classified" rule — owner-mandated
+        narration-integrity closure): with ONLY structure evidence (an
+        id set, no current decomposition), a covered slot whose Block
+        provably no longer exists is BLOCKED — an existing audio file
+        alone is no longer proof that the audio belongs to the current
+        narration (the post-Re-detect orphaned-audio class)."""
         from engine.audio_provenance import resolved_slot_sources
-        # The critical no-regression: after a re-detect ALL block ids are
-        # replaced; with full coverage Combine still succeeds (the asset
-        # join is identity-based against the RECORDED slots, and only
-        # UNCOVERED slots are ever classified).
         scene = self.make_scene(slots=self.slots_for(3))
         scene.audio_assets = [
             self.asset("blk01:1", 1, block_id="blk01"),
@@ -284,11 +287,13 @@ class TestResolvedSlotSourcesClassification(_PureFactory):
             self.asset("blk03:1", 3, block_id="blk03"),
         ]
         sources, blockers = resolved_slot_sources(
-            scene, self.tmp,
-            current_block_ids={"new01", "new02", "new03"})
-        self.assertEqual(blockers, [])
-        self.assertEqual([s["slot_id"] for s in sources],
-                         ["blk01:1", "blk02:1", "blk03:1"])
+            scene, self.tmp, current_block_ids={"new01", "new02", "new03"})
+        self.assertEqual(sources, [])
+        self.assertEqual(len(blockers), 3)
+        self.assertTrue(all(
+            "still has audio, but its Block no longer exists" in b
+            for b in blockers), blockers)
+        self.assertTrue(all("Generate Long" in b for b in blockers))
 
     def test_plain_slot_unclassifiable(self):
         from engine.audio_provenance import (
@@ -417,22 +422,30 @@ class _MWHarness(unittest.TestCase):
                                         else "Block {0}".format(i + 1)))
                 for i, (b, para) in enumerate(zip(blocks, paras))]
 
-    def slots_for_blocks(self, blocks, labels=None):
+    def slots_for_blocks(self, blocks, labels=None, paras=None):
+        """Materialise slots for the blocks. When ``paras`` is given the
+        parts carry the REAL block texts (so the stamped ``content_sha``
+        matches the current decomposition — the proven-identity path);
+        without it the parts keep the helper's default text (slots whose
+        fingerprints deliberately do NOT match the editor text — the
+        changed-content class)."""
         from engine.audio_provenance import materialize_expected_slots
         return materialize_expected_slots([
-            _make_part(block_id=b.id,
+            _make_part(text=(paras[i] if paras else
+                             "A test sentence for the part."),
+                       block_id=b.id,
                        block_label=(labels[i] if labels
                                     else "Block {0}".format(i + 1)))
             for i, b in enumerate(blocks)])
 
-    def direct_asset(self, slot_id, part_index, version=1):
+    def direct_asset(self, slot_id, part_index, version=1, content_sha=None):
         import soundfile as sf
         path = os.path.join(self.tmp, "outputs",
                             "direct_p{0:03d}_v{1:02d}.wav".format(
                                 part_index, version))
         os.makedirs(os.path.dirname(path), exist_ok=True)
         sf.write(path, make_speech(0.5), SAMPLE_RATE)
-        return {
+        asset = {
             "id": "direct-{0}".format(slot_id),
             "scene_id": self.scene.id,
             "output_path": os.path.relpath(path, self.tmp),
@@ -446,6 +459,11 @@ class _MWHarness(unittest.TestCase):
             "generation_run": "{0}-r001".format(self.scene.id[:8]),
             "slot_id": slot_id,
         }
+        if content_sha is not None:
+            # P3.45.8: proven-identity asset (as if generated on the
+            # current content by a P3.45.8+ build).
+            asset["content_sha"] = content_sha
+        return asset
 
     def load_editor(self, text, blocks):
         """Production-faithful editor restore (the _load_scene_state
@@ -492,11 +510,15 @@ class _MWHarness(unittest.TestCase):
 class TestCombineClassificationWiring(_MWHarness):
 
     def test_active_scene_live_blocks_classify_stale(self):
+        from engine.audio_provenance import part_content_sha
         text, blocks, paras = self.make_blocks_and_text(3)
-        self.scene.expected_audio_slots = self.slots_for_blocks(blocks)
+        self.scene.expected_audio_slots = self.slots_for_blocks(
+            blocks, paras=paras)
         self.scene.audio_assets = [
-            self.direct_asset("blk01:1", 1),
-            self.direct_asset("blk02:1", 2),
+            self.direct_asset("blk01:1", 1,
+                              content_sha=part_content_sha(paras[0])),
+            self.direct_asset("blk02:1", 2,
+                              content_sha=part_content_sha(paras[1])),
         ]
         self.load_editor(text, blocks)
         # REAL deletion of Block 3's text through the editor (the
@@ -564,14 +586,26 @@ class TestCombineClassificationWiring(_MWHarness):
         self.assertIn(LEGACY_MISSING, msg)
         self.assertNotIn(STALE_MARKER, msg)
 
-    def test_redetect_full_coverage_combine_still_succeeds(self):
+    def test_redetect_full_coverage_combines_when_content_proven(self):
+        """P3.45.8 (D4 — uniquely provable block-ID replacement): after
+        Re-detect every block id is replaced while the text is
+        UNCHANGED; when both the slots and the assets carry matching
+        content fingerprints, the reconciliation path proves the audio
+        IS the current content and Combine still succeeds (the honest
+        successor of the pre-P3.45.8 "covered slots never classified"
+        behaviour — now EARNED by proof, not assumed)."""
         from engine.narration_blocks import PromptBlock
-        text, blocks, _ = self.make_blocks_and_text(3)
-        self.scene.expected_audio_slots = self.slots_for_blocks(blocks)
+        from engine.audio_provenance import part_content_sha
+        text, blocks, paras = self.make_blocks_and_text(3)
+        self.scene.expected_audio_slots = self.slots_for_blocks(
+            blocks, paras=paras)
         self.scene.audio_assets = [
-            self.direct_asset("blk01:1", 1),
-            self.direct_asset("blk02:1", 2),
-            self.direct_asset("blk03:1", 3),
+            self.direct_asset("blk01:1", 1,
+                              content_sha=part_content_sha(paras[0])),
+            self.direct_asset("blk02:1", 2,
+                              content_sha=part_content_sha(paras[1])),
+            self.direct_asset("blk03:1", 3,
+                              content_sha=part_content_sha(paras[2])),
         ]
         self.load_editor(text, blocks)
         # Simulate post-Re-detect: every block id replaced, same text.
@@ -586,10 +620,48 @@ class TestCombineClassificationWiring(_MWHarness):
         finally:
             self.win._editor.end_scene_load()
         ok, msg = self.combine_warning()
-        self.assertTrue(ok, "full coverage must combine after re-detect: "
-                            + msg)
+        self.assertTrue(ok, "full coverage with PROVEN content must "
+                            "combine after re-detect: " + msg)
         self.assertEqual(len(self.scene.combined_outputs), 1)
         self.assertEqual(self.scene.combined_outputs[0]["slot_count"], 3)
+
+    def test_redetect_full_coverage_blocked_for_unproven_legacy_audio(self):
+        """P3.45.8 fail-closed companion: the same re-detect state but
+        with LEGACY assets (no content fingerprint) is BLOCKED — the
+        audio cannot be proven to belong to the current narration — and
+        NOTHING is mutated by the failed combine."""
+        from engine.narration_blocks import PromptBlock
+        text, blocks, paras = self.make_blocks_and_text(3)
+        self.scene.expected_audio_slots = self.slots_for_blocks(
+            blocks, paras=paras)
+        self.scene.audio_assets = [
+            self.direct_asset("blk01:1", 1),
+            self.direct_asset("blk02:1", 2),
+            self.direct_asset("blk03:1", 3),
+        ]
+        self.load_editor(text, blocks)
+        new_blocks = [
+            PromptBlock(id="new{0:02d}".format(i + 1),
+                        start_offset=b.start_offset,
+                        end_offset=b.end_offset)
+            for i, b in enumerate(blocks)]
+        self.win._editor.begin_scene_load()
+        try:
+            self.win._editor.set_scene_blocks(new_blocks, text)
+        finally:
+            self.win._editor.end_scene_load()
+        slots_before = list(self.scene.expected_audio_slots)
+        assets_before = list(self.scene.audio_assets)
+        ok, msg = self.combine_warning()
+        self.assertFalse(ok)
+        self.assertEqual(len(msg.split("•")) - 1, 3,
+                         "every unproven covered slot is named: " + msg)
+        self.assertIn("cannot be proven", msg)
+        self.assertIn("Generate Long", msg)
+        # Fail-closed leaves everything untouched.
+        self.assertEqual(self.scene.expected_audio_slots, slots_before)
+        self.assertEqual(self.scene.audio_assets, assets_before)
+        self.assertEqual(len(self.scene.combined_outputs), 0)
 
 
 # ===========================================================================
@@ -818,12 +890,15 @@ class TestScenarioCRegenerateAndCombine(_MWHarness):
 
     def test_after_generate_long_missing_list_matches_current_structure(self):
         from PySide6.QtGui import QTextCursor
-        from engine.audio_provenance import coverage_counts
+        from engine.audio_provenance import coverage_counts, part_content_sha
         text, blocks, paras = self.make_blocks_and_text(3)
-        self.scene.expected_audio_slots = self.slots_for_blocks(blocks)
+        self.scene.expected_audio_slots = self.slots_for_blocks(
+            blocks, paras=paras)
         self.scene.audio_assets = [
-            self.direct_asset("blk01:1", 1),
-            self.direct_asset("blk02:1", 2),
+            self.direct_asset("blk01:1", 1,
+                              content_sha=part_content_sha(paras[0])),
+            self.direct_asset("blk02:1", 2,
+                              content_sha=part_content_sha(paras[1])),
         ]
         self.load_editor(text, blocks)
         # Delete Block 3 (real editor deletion).
@@ -869,13 +944,18 @@ class TestScenarioCRegenerateAndCombine(_MWHarness):
         the deleted blocks are never demanded again, while their
         historical audio stays preserved (append-only lineage)."""
         from PySide6.QtGui import QTextCursor
-        from engine.audio_provenance import coverage_counts
+        from engine.audio_provenance import (
+            coverage_counts, part_content_sha)
         text, blocks, paras = self.make_blocks_and_text(4)
-        self.scene.expected_audio_slots = self.slots_for_blocks(blocks)
+        self.scene.expected_audio_slots = self.slots_for_blocks(
+            blocks, paras=paras)
         self.scene.audio_assets = [
-            self.direct_asset("blk01:1", 1),
-            self.direct_asset("blk02:1", 2),
-            self.direct_asset("blk03:1", 3),
+            self.direct_asset("blk01:1", 1,
+                              content_sha=part_content_sha(paras[0])),
+            self.direct_asset("blk02:1", 2,
+                              content_sha=part_content_sha(paras[1])),
+            self.direct_asset("blk03:1", 3,
+                              content_sha=part_content_sha(paras[2])),
         ]
         self.load_editor(text, blocks)
         self.assertEqual(coverage_counts(self.scene), (3, 4))
@@ -1093,16 +1173,22 @@ class TestScenarioELoadRoundtrip(_MWHarness):
         mutated); and after regenerating the structure over the reloaded
         text the valid audio still joins and Combine succeeds."""
         from engine.project_manager import ProjectManager
-        from engine.audio_provenance import coverage_counts
+        from engine.audio_provenance import (
+            coverage_counts, part_content_sha)
         text, blocks, paras = self.make_blocks_and_text(3)
         # A post-deletion save: 2 blocks persisted, 3 slots recorded,
         # 2 assets — the stale reference lives in the project file.
+        # The assets carry content fingerprints (P3.45.8+ generation) so
+        # the round-trip must preserve them (identity survives disk).
         self.scene.text = "\n".join(paras[:2])
         self.scene.narration_blocks = [b.to_dict() for b in blocks[:2]]
-        self.scene.expected_audio_slots = self.slots_for_blocks(blocks)
+        self.scene.expected_audio_slots = self.slots_for_blocks(
+            blocks, paras=paras)
         self.scene.audio_assets = [
-            self.direct_asset("blk01:1", 1),
-            self.direct_asset("blk02:1", 2),
+            self.direct_asset("blk01:1", 1,
+                              content_sha=part_content_sha(paras[0])),
+            self.direct_asset("blk02:1", 2,
+                              content_sha=part_content_sha(paras[1])),
         ]
         runs_before = {a["slot_id"]: a["generation_run"]
                        for a in self.scene.audio_assets}
@@ -1134,6 +1220,12 @@ class TestScenarioELoadRoundtrip(_MWHarness):
             os.path.join(self.tmp, a["output_path"]))
             for a in lscene.audio_assets))
         self.assertEqual(coverage_counts(lscene), (2, 3))
+        # P3.45.8: the content fingerprints survive the disk round-trip
+        # (slots AND assets — identity is persisted, not re-derived).
+        self.assertTrue(all(s.get("content_sha") for s
+                            in lscene.expected_audio_slots))
+        self.assertTrue(all(a.get("content_sha") for a
+                            in lscene.audio_assets))
         # MW-level: the reloaded scene classifies honestly (fail-closed,
         # stale reference named with the remedy, nothing mutated, the
         # valid audio files intact).

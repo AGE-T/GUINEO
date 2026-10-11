@@ -4303,11 +4303,15 @@ class MainWindow(QMainWindow):
              authoritative engine);
           3. parts are matched to missing slots by EXACT slot identity
              (``block_slot_id`` — the same derivation
-             ``materialize_expected_slots`` uses). A slot whose text no
-             longer exists (block deleted, part decomposition changed)
-             or whose identity is positional only (plain parts) is
-             REPORTED with the Generate Long remedy — never forced into
-             a job (no wrong-text association);
+             ``materialize_expected_slots`` uses) AND — P3.45.8 — by
+             PROVEN content identity: the slot's recorded ``content_sha``
+             must equal the current part's fingerprint (the exact
+             generation prompt + speaker + character). A slot whose text
+             changed at its position, whose decomposition changed, whose
+             speaker/character identity changed, or whose legacy
+             structure predates content provenance is REPORTED with the
+             Generate Long remedy — never forced into a job (no
+             wrong-text association, fail closed);
           4. each job is built by the shared ``_build_long_part_job``
              (full provenance; asset-aware version; one fresh run id for
              this activation) and APPENDED — the queue is never cleared,
@@ -4408,6 +4412,7 @@ class MainWindow(QMainWindow):
                 key = block_slot_id(
                     part_block_id, getattr(part, "part_of_block", 1) or 1)
                 part_by_slot.setdefault(key, part)
+        from engine.audio_provenance import part_content_sha
         scene_id_full = scene.id
         # One fresh generation run for this activation (same rule as a
         # Generate Long activation / a selective run).
@@ -4425,6 +4430,32 @@ class MainWindow(QMainWindow):
                 unmatched.append((slot, "the current text no longer "
                     "produces this part — run Generate Long"))
                 continue
+            # P3.45.8 — content identity: block_id + part_of_block pin a
+            # POSITION, not the text at that position. The repair job may
+            # only be created when the slot's recorded content fingerprint
+            # matches the CURRENT part's content fingerprint (the exact
+            # generation prompt + speaker + character). A changed text, a
+            # changed decomposition at this position, a changed speaker or
+            # character, or a legacy slot without a fingerprint FAILS
+            # CLOSED here — reported with the Generate Long remedy, never
+            # silently attached (the old behaviour could attach a
+            # different current text slice to the old expected slot).
+            slot_sha = slot.get("content_sha")
+            current_sha = part_content_sha(
+                getattr(part, "prompt", None),
+                getattr(part, "speaker", "") or "",
+                getattr(part, "character_id", None))
+            if not slot_sha:
+                unmatched.append((slot, "legacy structure without "
+                    "content identity — run Generate Long (review mode "
+                    "re-materialises the structure) and re-add or "
+                    "regenerate this part"))
+                continue
+            if slot_sha != current_sha:
+                unmatched.append((slot, "the current text at this part's "
+                    "position differs from the recorded generation "
+                    "content — run Generate Long"))
+                continue
             job = self._build_long_part_job(
                 part, slot.get("part_index") or 1, slot, scene,
                 scene_id_full, generation_run, params, default_voice_id, {})
@@ -4432,7 +4463,8 @@ class MainWindow(QMainWindow):
             added.append(job)
             logger.info(
                 "Re-add Missing: restored queue row for slot %s "
-                "(block %s, part_index %s, run %s)",
+                "(block %s, part_index %s, run %s, content identity "
+                "PROVEN)",
                 slot_id, slot.get("block_id"), slot.get("part_index"),
                 generation_run)
         dlg = self._alive_batch_dialog()
@@ -4619,9 +4651,21 @@ class MainWindow(QMainWindow):
             # recorded structure legitimately lags until the next Generate
             # Long). Read-only: the recorded structure itself is never
             # mutated here, and Combine stays fail-closed either way.
+            #
+            # P3.45.8 — COVERED-slot content integrity: for the ACTIVE
+            # scene the current decomposition's per-part content
+            # identities are derived from ONE splitter pass over the live
+            # editor text (the same authoritative engine + parameter
+            # sources Generate Long and Re-add Missing use) and passed to
+            # resolved_slot_sources, which then proves — per covered slot
+            # — that the recorded expected content AND the resolved
+            # asset's generation content match the CURRENT text. An
+            # existing audio file alone is no longer proof.
             current_block_ids = self._combine_structure_block_ids(scene)
+            current_parts = self._combine_current_identities(scene)
             sources, blockers = resolved_slot_sources(
-                scene, app_root, current_block_ids=current_block_ids)
+                scene, app_root, current_block_ids=current_block_ids,
+                current_parts=current_parts)
             if blockers:
                 QMessageBox.warning(
                     self, APP_NAME,
@@ -4762,6 +4806,109 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(
                 self, APP_NAME, "Scene Combine failed:\n{0}".format(exc))
             return False
+
+    def _combine_current_identities(self, scene):
+        """P3.45.8: the CURRENT decomposition's per-part content
+        identities for the Combine-time covered-slot integrity check.
+
+        Runs the SAME authoritative splitter pass Generate Long and
+        Re-add Missing use (validate_block_ranges gate +
+        ``NarrationSplitter.split`` over the live editor text with the
+        CURRENT global settings/parameters) and returns one identity
+        entry per current part::
+
+            [{slot_id, block_id, part_of_block, content_sha}]
+
+        ``content_sha`` is :func:`part_content_sha` over the part's exact
+        generation prompt + speaker + character — the fingerprint
+        ``materialize_expected_slots`` stamped on the slot at Generate
+        Long time, so equality PROVES the current text still produces
+        exactly the recorded generation input.
+
+        Return semantics (mirroring ``_combine_structure_block_ids``):
+          * ACTIVE scene → ALWAYS a list (an EMPTY list over a non-blank
+            editor is impossible — the splitter never returns zero parts
+            for non-blank text; a BLANK editor returns [] as POSITIVE
+            evidence that every part's content is gone).
+          * Non-active scene (the by-id combine path) → ``None``: the
+            per-scene generation settings needed to re-run the splitter
+            faithfully are NOT persisted, so no trustworthy
+            decomposition can be derived — the caller falls back to the
+            structure-evidence tier (block-id orphan check only). The
+            precise constraint is documented in the P3.45.8 design
+            record.
+          * Invalid Block ranges or a splitter failure → ``None`` (tier-1
+            fallback; the caller's block-id evidence still applies). The
+            pass is read-only: the editor, the block model, the recorded
+            structure and the queue are never touched.
+        """
+        if scene is not self._active_scene or self._editor is None:
+            return None
+        try:
+            text = self._editor.get_text()
+        except Exception:
+            logger.debug("Combine identities: editor text unavailable",
+                        exc_info=True)
+            return None
+        if not text.strip():
+            # POSITIVE evidence: the current text is empty — no part's
+            # content survives.
+            return []
+        try:
+            blocks = self._editor.block_manager.blocks
+        except Exception:
+            logger.debug("Combine identities: live block model unavailable",
+                        exc_info=True)
+            return None
+        if blocks:
+            from engine.narration_block_manager import validate_block_ranges
+            if validate_block_ranges(blocks, text):
+                # Unsafe to decompose (same fail-closed gate as Generate
+                # Long) — fall back to the structure-evidence tier.
+                return None
+        params = self._control_panel.get_parameters()
+        raw_mode = self._editor.is_raw_mode()
+        from engine.narration_splitter import NarrationSplitter
+        splitter = NarrationSplitter()
+        try:
+            parts = splitter.split(
+                text=text,
+                blocks=blocks if blocks else None,
+                global_emotion=self._emotion,
+                global_style=self._style,
+                global_speed=self._speed,
+                global_pitch=self._pitch,
+                global_delivery=self._delivery,
+                base_parameters=params,
+                raw_mode=raw_mode,
+                detect_speakers=True,
+                allow_sfx=params.allow_sfx,
+            )
+        except ValueError:
+            logger.debug("Combine identities: splitter refused the current "
+                        "text (speaker detection)", exc_info=True)
+            return None
+        from engine.audio_provenance import (
+            part_content_sha, block_slot_id, plain_slot_id,
+        )
+        out = []
+        for i, part in enumerate(parts):
+            block_id = getattr(part, "source_block_id", None)
+            part_of_block = int(getattr(part, "part_of_block", 1) or 1)
+            if block_id:
+                slot_id = block_slot_id(block_id, part_of_block)
+            else:
+                slot_id = plain_slot_id(i + 1)
+            out.append({
+                "slot_id": slot_id,
+                "block_id": block_id,
+                "part_of_block": part_of_block,
+                "content_sha": part_content_sha(
+                    getattr(part, "prompt", None),
+                    getattr(part, "speaker", "") or "",
+                    getattr(part, "character_id", None)),
+            })
+        return out
 
     def _combine_structure_block_ids(self, scene):
         """P3.45.6 addendum: the CURRENT structure's block ids for the

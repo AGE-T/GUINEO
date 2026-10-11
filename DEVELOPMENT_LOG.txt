@@ -5011,3 +5011,114 @@ megszűnt: a badge saját fehér kitöltése olvashatóvá teszi sötéten is.
 DOKUMENTÁCIÓ: docs/design/…CLOSEOUT…NOTIFICATIONS.md §7 addendum;
 OPEN_BUGS.md P3.45.7-bejegyzés (CLOSED). MARADVÁNY: a Windows-oldali
 vizuális megerősítés a tulajdonos kézi listáján marad (unchanged).
+
+P3.45.8 — NARRÁCIÓ-TARTALOM-AZONOSSÁGI INTEGRITÁS (zárás)
+A tulajdonosi mandátum: a generált hang többé nem társítható csendben
+olyan szöveghez, amelyhez nem ezt generálták. A block_id +
+part_of_block POZÍCIÓT rögzít, nem a pozíción álló szöveget; egy
+létező hangfájl pedig önmagában nem bizonyíték. Két társítási pont
+ tudott pontosan ezt tenni: a Re-add Missing (sorhelyreállítás) és a
+Scene Combine (slot-feloldás).
+
+MEGOLDÁS — VERZIÓZOTT TARTALOM-AZONOSSÁG (content_sha): SHA-256 a
+pontos generálási prompt + speaker + karakter fölött (b"1\n" előfix =
+verzió; bájtexakt, NINCS normalizáció; a prompt a generátornak tényleg
+elküldött szöveg — SplitPart.prompt == BatchJob.prompt ==
+GenerationRequest.text == GenerationResult.prompt a termékpályán). Az
+EGYETLEN slot-író (materialize_expected_slots) és az EGYETLEN asset-író
+(register_generation_result) bélyegzi; a projekt mentés/betöltés
+körében érintetlenül megmarad. A hangparaméterek (hangprofil, seed,
+hőmérséklet) tudatosan NEM részei az azonososságnak — azok a
+verziózott-újragenerálás modelljének hatköre (azonos slot + új
+paraméter = új part_version, a meglévő append-only szerződés szerint).
+A P3.28-as TERMÉKSZABÁLY (§0: nincs prompt-hash, nincs automatikus
+invalidálás) pontosan dokumentált módosítást kap: az ujjlenyomat KIZÁRÓLAG
+fail-closed KAPU a két társítási ponton — a rendszer továbbra sem
+dönt úgy, hogy "a felhasználónak regenerálnia kell"; csak megtagadja a
+nem bizonyítható társítást és megnevezi a javítási utat.
+
+RE-ADD MISSING: a meglévő csővezeték (ugyanaz validate_block_ranges
+kapu + ugyanaz splitter-menet + ugyanaz _build_long_part_job építő +
+append-only vár-javítás) EGY új ellenőrzéssel: a slot rögzített
+content_sha-jának egyeznie kell az aktuális rész ujjlenyomatával.
+Megváltozott szöveg / megváltozott bontás / megváltozott speaker vagy
+karakter / örökölt (ujjlenyomat nélküli) slot → MEGTAGADVA, a Generate
+Long javítási úttal (sosem csendben, sosem erőltetve; a kudarc után
+semmi nem változik). Duplikátum azonos szövegek NEM kétértelműek itt:
+a slot saját pozíciója + saját ujjlenyomata a saját tartalmát bizonyítja.
+
+SCENE COMBINE — FEDETT SLOTOK VALIDÁLÁSA: resolved_slot_sources új
+current_parts evidencia-szintje. Az AKTÍV jelenethez a MainWindow EGY
+splitter-menetet futtat az élő szerkesztő szövegén (ugyanaz a mérvadó
+motor + paraméterforrás, mint a Generate Long / Re-add; írásvédett) és
+slotonként BIZONYÍTJA, hogy a rögzített várt tartalom ÉS a feloldott
+hang tartalma egyaránt az AKTUÁLIS szöveghez tartozik. A slot_id
+eltűnése (pl. Re-detect azonos szövegen) CSAK egyértelmű ujjlenyomat-
+egyezés esetén engedésezik (D4); nulla egyezés → árva (D1); több →
+kétértelmű (D5); örökölt → bizonyíthatatlan (D6). A by-id combine út
+(NEM aktív jelenet) blokk-szintű árva-ellenőrzést kaphat csak — a
+jelenetenkénti generálási beállítások nem perzisztálódnak, ez a korlát
+pontosan dokumentálva (design record §3.2). A P3.45.6-ADD "a fedett
+slotokat sosem osztályozzuk" szabálya a mandátummal felülírva: az őszint
+utód-viselkedés BIZONYÍTVA érdemelhető ki (azonos bizonyított állapot
+továbbra is combine-ol; a Re-detect-utáni azonos szöveg bizonyítás után
+combine-ol). A sikertelen combine SOHA nem töröl és nem módosít semmit.
+
+ÖRÖKLÖTT PROJEKTEK (őszinte hatókör): a P3.45.8 előtti mentett jelenetek
+ujjlenyomat nélküliek, és semmilyen perzisztált metaadat nem rögzíti a
+generálási szöveget (utánanézve: a slot/asset csak azonosítókat, címkéket,
+verziókat és futásazonosítókat hordoz) — az azonososság nem bizonyítható,
+a műveletek MEGTAGADJÁK a bizonyítvány-gyártás helyett. A javítási lánc
+destruktív nélküli: Generate Long (a review mód elég a
+struktúra-újramaterializáláshoz), majd az érintett részek újragenerálása.
+
+TESZTEK: tests/test_p3_45_8_content_identity_integrity.py — 35
+regresszió: az azonosossági primitív (determinizmus, bájtexaktság,
+speaker/karakter-érzékenység, író-egyezés); a
+resolved_slot_sources motor-szintű mátrixa (bizonyított lánc /
+megváltozott / lejárt-hang / örökölt / egyértelmű engedésezés /
+kétértelmű / árva / pozitív-üres / struktúra-szint / bájtazonos
+alapértelmezés); a VALÓDI MainWindow-mátrix E1–E8 (Re-add) és D1–D9
+(Combine) a feladat felsorolása szerint, valódi szerkesztőn, valódi
+splitteren, valódi köteg-generáláson és valódi Combine-on át; plusz a
+current-identity deriváció saját tesztjei. Frissített történelmi pinek:
+p3_45_6 (a felülírt szabály új szerződéssel + társ-tesztek), p3_28 /
+p3_31 (a fixtúrák a teljes azonosossági láncot hordozzák — valódi
+app-állapot), p3_37 (az aktuális fázis dokumentációs pinje).
+
+VALÓDI UI-SCREENSHOT: docs/screenshots/guineo-main-window.png (1440×860)
+— a valódi alkalmazás genuin capture-je ezen a builden: valódi
+belépési sorozat, tiszta általános minta-állapot (demo projekt /
+mintanarráció Blokk-nézetben + egy mintakarakter), a valódi ablak
+renderelése és capture-e window.grab()-bel. A módszer őszintén
+dokumentálva: a sandboxban nincs használható megjelenítő-kiszolgáló
+(Xvfb megpróbálva — a konténer X11 socket-jogosultsága blokkolja), így
+a capture Qt offscreen platformon futott; a pixeleket a valódi
+alkalmazás renderelési pipeline-ja állítja elő, nem újrarajzolt vagy
+gyártott kép. VLM-lel ellenőrizve: olvasható fő UI, valódi
+alkalmazásablak, nincs privát adat. README.md és README_HU.md
+relatív útvonalon hivatkozza; a release ZIP-ben és a GitHub Release
+csatolmányaként is jelen van.
+
+DOKUMENTÁCIÓ-HIGIÉNA: a gyökér README-k (EN+HU) aktuálissá téve —
+P3.45.8 újdonságok, screenshot, Releases-lap útmutató, telepítési
+ZIP-név, fázis- és kiadástörténet-táblák; a tesztszám-korrekció
+véglegesítve (a korábbi "1889" állítás chunk-összegzési dupla-számolás
+volt; a korrigált P3.45.7-alap 1883 + 35, a P3.45.8-cal 1919 + 35);
+repo-higiénia-audit: NINCS nyomon követett futásidejű/velőlt artifact
+(0 tracked projects/settings/logs/presets/outputs/voices; a korábbi
+körök ezt strukturálisan lezárták). TERVMARADVÁNY: a
+tests/conftest.py naplózás/teszt-izoláció témája a feladat hatókör-szabálya
+miatt EZEN a körön KIVül marad, nyitott mérnöki kérdésként dokumentálva
+(NEM javítva csendben, NEM állítva javítottnak).
+
+VALIDÁCIÓ: TELJES akkumulátor 8 chunk-hívásban (a dokumentált SSH06-os
+osztály-izolációval): 1919 külön teszt + 35 alteszt, NULLA hiba (1924
+futtatás = 1919 + 5 dokumentált SSH12H13 újrafutás; semmi nincs
+kihagyva). verify_compile 162/162; verify_architecture PASS (a 2
+dokumentált kivétellel); verify_integration PASS;
+verify_functional_integrity 80/80; indítási füstteszt a valódi
+belépési úton zöld. A korrekt, deduplikált tesztszám-meghatározás
+gyűjtés-újraköltéssel igazolva (pytest --collect-only: 1919).
+
+P3.45.8 ITT ÁLL MEG.

@@ -354,16 +354,29 @@ class _MWHarness(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     # --- fixture: a fully-covered Scene with real WAVs ---------------
+    #: P3.45.8: the fixture scenes now carry the full identity chain
+    #: (editor text + blocks + content fingerprints on slots and
+    #: assets) so the Combine-time content-identity gate PROVES the
+    #: audio — the R3 takeover semantics are tested on a fully valid
+    #: narration, exactly what the real app combines.
+    BLOCK_TEXTS = ["Narration sentence for the first block.",
+                   "Narration sentence for the second block."]
+
     def cover_scene(self, n_blocks=2):
         import soundfile as sf
+        from engine.audio_provenance import part_content_sha
+        from engine.narration_blocks import PromptBlock
         os.makedirs(os.path.join(self.tmp, "outputs"), exist_ok=True)
         slots, assets = [], []
         for i in range(1, n_blocks + 1):
             bid = "b{0}".format(i)
+            text = self.BLOCK_TEXTS[i - 1]
+            sha = part_content_sha(text)
             slots.append({"slot_id": "{0}:1".format(bid),
                           "block_id": bid, "block_label": "B{0}".format(i),
                           "part_index": i, "part_of_block": 1,
-                          "speaker": "", "character_id": None})
+                          "speaker": "", "character_id": None,
+                          "content_sha": sha})
             rel = "outputs/B{0}_v01.wav".format(i)
             sf.write(os.path.join(self.tmp, rel), make_speech(1.0),
                      SAMPLE_RATE, subtype="FLOAT")
@@ -373,20 +386,38 @@ class _MWHarness(unittest.TestCase):
                 "duration": 1.0, "speaker": None, "character_id": None,
                 "voice_profile_id": None, "generated_at": "20260101_120000",
                 "block_id": bid, "part_index": i, "part_version": 1,
-                "generation_run": "sc1abcd-r001"})
+                "generation_run": "sc1abcd-r001", "slot_id": "{0}:1".format(bid),
+                "content_sha": sha})
         self.scene.expected_audio_slots = slots
         self.scene.audio_assets = assets
+        # The live editor state for the active-scene combine path.
+        texts = self.BLOCK_TEXTS[:n_blocks]
+        text = "\n".join(texts)
+        blocks = []
+        pos = 0
+        for i, t in enumerate(texts):
+            blocks.append(PromptBlock(id="b{0}".format(i + 1),
+                                      start_offset=pos,
+                                      end_offset=pos + len(t)))
+            pos += len(t) + 1
+        self.scene.text = text
+        self.scene.narration_blocks = [b.to_dict() for b in blocks]
+        self.win._load_scene_state(self.scene)
+        self.win._active_scene = self.scene
 
     def stale_combined(self):
         """A combined output whose lineage points at v01 assets while a
-        newer v02 exists for B1 (stale by R1)."""
+        newer v02 exists for B1 (stale by R1 — same content, new
+        version: the versioned-regeneration model)."""
+        from engine.audio_provenance import part_content_sha
         self.scene.audio_assets.append({
             "id": "asset_b1_v2", "scene_id": self.scene.id,
             "output_path": "outputs/B1_v02.wav", "duration": 1.0,
             "speaker": None, "character_id": None, "voice_profile_id": None,
             "generated_at": "20260101_120100", "block_id": "b1",
             "part_index": 1, "part_version": 2,
-            "generation_run": "sc1abcd-r002"})
+            "generation_run": "sc1abcd-r002", "slot_id": "b1:1",
+            "content_sha": part_content_sha(self.BLOCK_TEXTS[0])})
         import soundfile as sf
         sf.write(os.path.join(self.tmp, "outputs", "B1_v02.wav"),
                  make_speech(1.0), SAMPLE_RATE, subtype="FLOAT")

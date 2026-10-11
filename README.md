@@ -8,48 +8,53 @@
 on the Higgs TTS 3 (Higgs Audio V3) model from Boson AI. All processing
 happens on your machine — no cloud, no telemetry.
 
+![The GUINEO main window](docs/screenshots/guineo-main-window.png)
+
 [🇭🇺 Magyar dokumentáció](README_HU.md) ·
-[GitHub repository](https://github.com/AGE-T/GUINEO)
+[GitHub repository](https://github.com/AGE-T/GUINEO) ·
+[Releases](https://github.com/AGE-T/GUINEO/releases)
 
 ---
 
 <a id="english"></a>
 
 <a id="whats-new"></a>
-## What's new in P3.44.5
+## What's new in P3.45.8
 
-P3.44.5 is a **stabilisation and integrity release**: two independently
-reproduced defects are fixed at their exact ownership points, and both are
-locked in by a new permanent regression suite. No other behaviour changed.
+P3.45.8 is the **narration-integrity closure**: generated audio can no
+longer be silently associated with text it was not generated for.
 
-- **Batch window lifecycle (audit Issues B and D).** A Batch Generation
-  window that was closed and later re-opened (same scene, same mode) used to
-  stop receiving updates from the running batch: row states froze, Start
-  stayed disabled and Pause/Stop stayed enabled after completion, and the
-  window recovered only if you pressed Pause or Stop. Every presentation of
-  the window now re-establishes the manager listener **idempotently**
-  (exactly one listener, never duplicates) and re-synchronises the whole
-  table from the manager's actual state — so a re-opened window always shows
-  the truth, including a batch that finished while the window was closed.
-  The BatchManager state machine itself was correct throughout and is
-  unchanged.
-- **Block-aware audio provenance matching.** Generated audio is now matched
-  to a scene's expected slots by **block identity** (`block_id`), not merely
-  by global part position. Previously, after a structural edit, an old audio
-  file whose position happened to line up with the new structure was
-  silently accepted as coverage — and Combine Scene could assemble old audio
-  under the new text. Old audio can no longer masquerade as coverage for a
-  structurally different generation plan.
-- **29 new regression tests**
-  (`tests/test_p3_44_5_stabilisation_integrity.py`) capture both defects:
-  17 of them fail on the pre-P3.44.5 code and all 29 pass after the fix.
+- **Content identity for every generated part.** Each expected audio slot
+  and each generated audio asset now records a `content_sha` fingerprint
+  (SHA-256 over the exact generation prompt, speaker and character). The
+  fingerprint is stamped by the same authoritative pipeline that builds
+  the parts and survives project save/load unchanged.
+- **Re-add Missing fails closed.** Repairing the batch queue after removed
+  rows only re-creates a job when the slot's recorded content PROVABLY
+  matches the current text at that position. Changed text, changed
+  decomposition, a changed speaker/character, or a legacy structure without
+  fingerprints is reported with the Generate Long remedy — never silently
+  attached to a different text slice.
+- **Scene Combine validates covered slots too.** An existing audio file is
+  no longer treated as proof that the audio belongs to the current
+  narration: Combine proves, per slot, that the recorded expected content
+  AND the resolved audio match the CURRENT text. A uniquely matching
+  block-ID replacement (e.g. Re-detect over unchanged text) is reconciled;
+  stale, ambiguous or unproven audio blocks the combine with the exact
+  reason and remedy — and a failed combine never deletes or mutates
+  anything (append-only history is preserved).
+- **35 new regression tests**
+  (`tests/test_p3_45_8_content_identity_integrity.py`) pin the full scenario
+  matrix (changed text, shifted boundaries, legacy projects, duplicates,
+  mixtures, repair-then-combine) through the real application logic.
 
-Implementation record: `docs/design/P3_44_5_STABILISATION_NOTES.md`;
-evidence base: `docs/audits/P3_44_5_RESEARCH_AUDIT.md`.
+Older release notes: every phase has its full implementation record under
+`docs/design/` and the dated history in `DEVELOPMENT_LOG.txt`; the
+[release history](#release-history) table summarises the recent phases.
 
 ## Contents
 
-1. [What's new in P3.44.5](#whats-new)
+1. [What's new in P3.45.8](#whats-new)
 2. [What is GUINEO?](#what-is-guineo)
 3. [Installation](#installation)
 4. [Updating](#updating)
@@ -113,9 +118,11 @@ first run and works offline afterwards.
 version), an NVIDIA GPU with CUDA support, about 12 GB of free disk space,
 and an internet connection for the first run.
 
-1. Download the latest release ZIP (e.g. `releases/GUINEO_P3.44.5_current.zip`
-   from the [GitHub repository](https://github.com/AGE-T/GUINEO)) and extract
-   the GUINEO folder to any location (e.g. `C:\GUINEO`).
+1. Download the latest release ZIP (`GUINEO_P3.45.8_current.zip`) from the
+   repository's [Releases page](https://github.com/AGE-T/GUINEO/releases) or
+   the `releases/` folder of the
+   [GitHub repository](https://github.com/AGE-T/GUINEO) and extract the
+   GUINEO folder to any location (e.g. `C:\GUINEO`).
 2. Install **Python 3.11** from
    [python.org](https://www.python.org/downloads/release/python-3119/) —
    tick “Add Python to PATH” during installation.
@@ -698,8 +705,8 @@ status bar and the Help → About dialog. About also displays the full
 environment (Python, PyTorch, Transformers, Qt, CUDA, GPU, model,
 precision) and offers a **Copy Debug Info** button.
 
-The current development phase is **P3.44.5** (Stabilisation / Integrity
-Phase 1) — see [Release history](#release-history).
+The current development phase is **P3.45.8** (Narration-Integrity Closure)
+— see [Release history](#release-history).
 
 <a id="release-history"></a>
 ## Release history
@@ -711,7 +718,10 @@ folder on [GitHub](https://github.com/AGE-T/GUINEO).
 
 | Phase | Focus |
 |---|---|
-| **P3.44.5** (current) | Stabilisation / integrity: batch-window lifecycle fix (Issues B+D), block-aware provenance join, 29-test regression suite |
+| **P3.45.8** (current) | Narration-integrity closure: `content_sha` fingerprints, fail-closed Re-add Missing + Scene Combine covered-slot validation, 35-test suite |
+| P3.45.7 | Success-icon artwork swap (ok3 badge, verbatim) |
+| P3.45.6 | Final stability & narration integrity: stop race, block-range gate, startup restoration, gutter layout, preview/token parity; release cleanup, Combine A–D regressions, notification success icon |
+| P3.44.5 | Stabilisation / integrity: batch-window lifecycle fix (Issues B+D), block-aware provenance join, 29-test regression suite |
 | P3.44.4 | Batch execution-run semantics; feedback-format regression suite |
 | P3.44.3 | Feedback dialog fixes |
 | P3.44.2 | SFX pipeline fixes |

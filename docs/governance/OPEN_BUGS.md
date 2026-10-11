@@ -3240,3 +3240,58 @@ is resolved by the artwork itself.
 
 **Residuals**: Windows-side visual confirmation stays on the owner's
 manual checklist (unchanged house residual).
+
+## P3.45.8 round — narration content-identity integrity
+
+### P3.45.8 — Re-add Missing and Scene Combine could silently associate audio with text it was not generated for: CLOSED
+
+**Reported problem (owner mandate)**: block_id + part_of_block identify a
+POSITION, not the text at that position; an existing audio file was
+treated as proof of coverage. Re-add Missing could attach a different
+current text slice to an old expected slot; Combine could assemble stale
+audio under changed text (including after Re-detect replaced block ids).
+
+**Resolution**: a versioned content identity
+(`content_sha`, SHA-256 over the exact generation prompt + speaker +
+character — `engine.audio_provenance.part_content_sha`) is stamped by the
+ONE slot writer (materialize_expected_slots) and the ONE asset writer
+(register_generation_result), survives project save/load, and gates both
+association points FAIL-CLOSED:
+
+* Re-add Missing creates a repair job only when the slot's recorded
+  content provably matches the current part at that position; changed
+  text / changed decomposition / changed speaker-character / legacy
+  slots without fingerprints are reported with the Generate Long remedy,
+  never silently attached.
+* Scene Combine validates COVERED slots too: slot content AND resolved
+  audio content must provably match the CURRENT text (derived from ONE
+  authoritative splitter pass over the live editor for the active
+  scene); a uniquely matching block-ID replacement (Re-detect over
+  unchanged text) is reconciled; stale / ambiguous / unproven audio
+  blocks the combine with the exact reason and remedy, and a failed
+  combine never deletes or mutates anything.
+
+**Contract note**: the P3.45.6-ADD "covered slots are never classified"
+rule is superseded by the owner mandate; the honest successor behaviour
+is earned by proof (identical proven state still combines; re-detect
+over unchanged text combines once proven) and pinned by rewritten
+regressions.
+
+**Evidence**: tests/test_p3_45_8_content_identity_integrity.py (35
+regressions: the E1–E8 Re-add matrix and the D1–D9 Combine matrix
+through the real application logic); full battery 1919 distinct tests +
+35 subtests, 0 failures; all validators + launch smoke green. Design
+record: docs/design/P3_45_8_CONTENT_IDENTITY_INTEGRITY.md (legacy
+fail-closed rules, the by-id combine tier constraint, the genuine UI
+screenshot record).
+
+**Residuals (documented decisions, not defects)**:
+- Legacy (pre-P3.45.8) projects must re-materialise (Generate Long,
+  review mode suffices) and regenerate the affected parts once — the
+  safe price of provable integrity; historical audio is never deleted.
+- The by-id Combine path enforces the block-level structure check only
+  (per-scene generation settings are not persisted; the precise
+  constraint is documented in the design record §3.2).
+- The tests/conftest.py logging/test-isolation issue remains OPEN and
+  untouched (explicitly out of scope for this round per the task's
+  scope rule).

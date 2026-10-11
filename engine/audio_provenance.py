@@ -19,6 +19,22 @@ THE PRODUCT RULE (design record §0 — governs everything below):
 
     The user alone decides when to regenerate.
 
+    P3.45.8 AMENDMENT (owner-mandated narration-integrity closure —
+    recorded here precisely because it touches §0's letter, never its
+    spirit): slots and assets now carry a ``content_sha`` content
+    identity (SHA-256 over the exact generation prompt + speaker +
+    character, see :func:`part_content_sha`). It is used ONLY as a
+    fail-closed GATE at the two association points where wrong-text
+    audio could previously be attached silently (Scene Combine's slot
+    resolution and Re-add Missing's queue repair): a slot whose content
+    cannot be PROVEN to match the current text is reported and blocked,
+    never automatically matched, never deleted, never regenerated. The
+    system still never decides "the user must regenerate" — it only
+    refuses to combine audio it cannot prove belongs to the current
+    narration, and names the remedy (Generate Long / regenerate the
+    affected parts). The append-only asset stream, the version model
+    and the explicit-selection model are untouched.
+
 THE ONE AUTHORITATIVE RECORD:
     ``Scene.audio_assets`` — the existing append-only stream. An asset
     exists in it if and only if that generation succeeded. Every question
@@ -68,6 +84,7 @@ engine state) and fully unit-testable.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from datetime import datetime
@@ -127,6 +144,50 @@ def plain_slot_id(part_index: int) -> str:
     return "plain:{0}".format(max(1, int(part_index)))
 
 
+# ---------------------------------------------------------------------------
+# Content identity (P3.45.8 — narration-integrity closure)
+# ---------------------------------------------------------------------------
+#: Version of the content-identity serialization. Baked into the hashed
+#: bytes (first line) so a future v2 serialization can never collide with
+#: a v1 fingerprint: cross-version comparisons simply fail closed.
+CONTENT_IDENTITY_VERSION = 1
+
+
+def part_content_sha(prompt, speaker=None, character_id=None):
+    """Deterministic content identity of ONE generation part (P3.45.8).
+
+    SHA-256 over the canonical, versioned serialization::
+
+        b"1\n" + speaker_utf8 + b"\n" + character_id_utf8 + b"\n" + prompt_utf8
+
+    ``prompt`` is the EXACT text sent to the generator (the fully
+    tokenised generation prompt — SplitPart.prompt / GenerationRequest.text
+    / GenerationResult.prompt are the same string on the production path).
+    No normalisation, no trimming, no case folding: byte-exact UTF-8, so
+    meaningfully different generation inputs can never appear equivalent.
+
+    ``speaker`` / ``character_id`` participate because they are
+    generation-relevant IDENTITY (a different speaker/character invalidates
+    reuse even when the prompt tokens happen to match); ``None`` and the
+    empty string canonicalise to the empty string. Generation PARAMETERS
+    that alter the audio without altering identity (voice profile, seed,
+    temperature) are deliberately NOT hashed — they are the
+    versioned-regeneration model's concern, not identity.
+
+    Returns ``None`` for a ``None`` prompt (no identity can be derived).
+    """
+    if prompt is None:
+        return None
+    h = hashlib.sha256()
+    h.update(("{0}\n".format(CONTENT_IDENTITY_VERSION)).encode("utf-8"))
+    h.update((speaker or "").encode("utf-8"))
+    h.update(b"\n")
+    h.update((character_id or "").encode("utf-8"))
+    h.update(b"\n")
+    h.update(prompt.encode("utf-8"))
+    return h.hexdigest()
+
+
 def materialize_expected_slots(parts: List[Any]) -> List[Dict[str, Any]]:
     """Build the expected slot list from a splitter run's parts.
 
@@ -138,8 +199,14 @@ def materialize_expected_slots(parts: List[Any]) -> List[Dict[str, Any]]:
     Generate Long).
 
     Each slot dict: {slot_id, block_id, block_label, part_index,
-    part_of_block, speaker, character_id}. ``block_id`` is None for
-    plain/speaker-split parts (slot_id = ``plain:{part_index}``).
+    part_of_block, speaker, character_id, content_sha}. ``block_id`` is
+    None for plain/speaker-split parts (slot_id = ``plain:{part_index}``).
+    ``content_sha`` (P3.45.8) is the part's content identity
+    (:func:`part_content_sha` over the exact generation prompt + speaker +
+    character) — the fail-closed join key for Combine validation and
+    Re-add Missing's identity check. Additive field: persisted scenes
+    without it keep working and simply classify as legacy (unprovable)
+    content at the gated operations.
     """
     slots: List[Dict[str, Any]] = []
     for i, part in enumerate(parts):
@@ -150,14 +217,18 @@ def materialize_expected_slots(parts: List[Any]) -> List[Dict[str, Any]]:
             slot_id = block_slot_id(block_id, part_of_block)
         else:
             slot_id = plain_slot_id(part_index)
+        speaker = getattr(part, "speaker", "") or ""
+        character_id = getattr(part, "character_id", None)
         slots.append({
             "slot_id": slot_id,
             "block_id": block_id,
             "block_label": getattr(part, "block_label", "") or "",
             "part_index": part_index,
             "part_of_block": int(part_of_block),
-            "speaker": getattr(part, "speaker", "") or "",
-            "character_id": getattr(part, "character_id", None),
+            "speaker": speaker,
+            "character_id": character_id,
+            "content_sha": part_content_sha(
+                getattr(part, "prompt", None), speaker, character_id),
         })
     return slots
 
@@ -815,7 +886,8 @@ def build_scene_combined_entry(
 
 
 def resolved_slot_sources(scene: Any, app_root: str,
-                          current_block_ids: Any = None) -> Tuple[
+                          current_block_ids: Any = None,
+                          current_parts: Any = None) -> Tuple[
         List[Dict[str, Any]], List[str]]:
     """Resolve the per-slot audio sources for a Scene Combine operation.
 
@@ -824,8 +896,10 @@ def resolved_slot_sources(scene: Any, app_root: str,
     outputs are structurally NEVER sources (double-inclusion protection,
     P3.28 §14): the combine input set is exactly the expected slot set.
 
-    Returns (sources, blockers). ``blockers`` names uncovered slots and
-    missing files — the caller must NOT silently skip them (§52).
+    Returns (sources, blockers). ``blockers`` names uncovered slots,
+    missing files and — P3.45.8 — slots whose audio cannot be PROVEN to
+    belong to the current narration; the caller must NOT silently skip
+    them (§52).
 
     P3.45.6 addendum — truthful classification of UNCOVERED slots
     (read-only; the structure is never mutated here): when
@@ -834,17 +908,81 @@ def resolved_slot_sources(scene: Any, app_root: str,
     is no longer among them is reported as a STALE STRUCTURE REFERENCE
     with the Generate Long remedy, instead of the legacy "no generated
     audio yet" message that would demand audio for content the user has
-    already deleted. Covered slots are never classified (an asset
-    resolves → source), so a full-coverage combine is unaffected even
-    when block ids were replaced (e.g. after Re-detect). The default
-    ``None`` keeps the exact legacy messages for every existing caller.
-    An EMPTY set is positive evidence of an empty current structure
-    (all blocks deleted) — every block-derived slot is then stale.
+    already deleted. An EMPTY set is positive evidence of an empty
+    current structure (all blocks deleted) — every block-derived slot is
+    then stale.
+
+    P3.45.8 — COVERED-slot content integrity (the narration-integrity
+    closure): an existing audio file is no longer treated as proof that
+    the audio belongs to the current narration. Two evidence tiers:
+
+    * ``current_parts`` (the CURRENT decomposition's per-part identities,
+      ``[{slot_id, block_id, part_of_block, content_sha}]`` — derived by
+      the caller from ONE splitter pass over the current text, the same
+      authoritative engine Generate Long uses): FULL identity
+      validation. A covered slot is a valid source only when its recorded
+      ``content_sha`` matches the current part at the same slot position
+      AND the resolved asset's ``content_sha`` matches too (the audio was
+      generated for exactly that content). A slot whose slot_id no longer
+      exists in the current decomposition may still be reconciled when
+      its content fingerprint UNAMBIGUOUSLY matches exactly one current
+      part (a provable block-ID replacement, e.g. after Re-detect over
+      unchanged text). Slots whose recorded content differs from the
+      current text, whose audio predates the recorded content, whose
+      provenance is missing (legacy projects), or whose text now appears
+      more than once are BLOCKED with the precise reason and remedy.
+      ``current_parts=[]`` (an empty list) is POSITIVE evidence of an
+      empty current decomposition.
+
+    * ``current_parts=None`` but ``current_block_ids`` provided: the
+      structure-evidence tier — a covered slot whose Block provably no
+      longer exists is blocked (orphaned audio); a covered slot whose
+      Block still exists is accepted WITHOUT content proof (the caller
+      could not provide a trustworthy decomposition — e.g. the by-id
+      combine path for a non-active Scene, where the per-scene generation
+      settings needed to re-run the splitter are not persisted). The
+      precise constraint is documented in the P3.45.8 design record.
+
+    * Both ``None`` (the default): the exact legacy behaviour for every
+      pre-existing caller — no classification at all.
+
+    Read-only in every tier: the recorded structure, the asset stream and
+    the queue are never mutated here; blocked audio is never deleted.
     """
     ids: Optional[set] = None
     if current_block_ids is not None:
         ids = {i for i in current_block_ids
                if isinstance(i, str) and i}
+    parts: Optional[List[Dict[str, Any]]] = None
+    if current_parts is not None:
+        parts = [e for e in current_parts
+                 if isinstance(e, dict) and e.get("slot_id")]
+        if ids is None:
+            # The decomposition IS the structure evidence when no
+            # explicit id set was given (an empty list yields the
+            # positive-empty set, never "no evidence").
+            ids = {e.get("block_id") for e in parts if e.get("block_id")}
+    parts_by_slot: Dict[str, Dict[str, Any]] = {}
+    if parts is not None:
+        for e in parts:
+            parts_by_slot.setdefault(e["slot_id"], e)
+
+    def _source(slot: Dict[str, Any], asset: Dict[str, Any],
+                rel: str) -> Dict[str, Any]:
+        return {
+            "slot_id": slot.get("slot_id", ""),
+            "block_id": slot.get("block_id"),
+            "block_label": slot.get("block_label", ""),
+            "part_index": slot.get("part_index"),
+            "asset_id": asset.get("id", ""),
+            "part_version": asset.get("part_version"),
+            "speaker": asset.get("speaker") or slot.get("speaker") or None,
+            "character_id": asset.get("character_id")
+                            or slot.get("character_id") or None,
+            "output_path": rel,
+            "duration": asset.get("duration", 0.0),
+        }
+
     slots = [s for s in (getattr(scene, "expected_audio_slots", None) or [])
              if isinstance(s, dict)]
     sources: List[Dict[str, Any]] = []
@@ -873,19 +1011,98 @@ def resolved_slot_sources(scene: Any, app_root: str,
             blockers.append(
                 "'{0}': audio file missing ({1})".format(label, rel or "?"))
             continue
-        sources.append({
-            "slot_id": slot_id,
-            "block_id": slot.get("block_id"),
-            "block_label": slot.get("block_label", ""),
-            "part_index": slot.get("part_index"),
-            "asset_id": asset.get("id", ""),
-            "part_version": asset.get("part_version"),
-            "speaker": asset.get("speaker") or slot.get("speaker") or None,
-            "character_id": asset.get("character_id")
-                            or slot.get("character_id") or None,
-            "output_path": rel,
-            "duration": asset.get("duration", 0.0),
-        })
+        # ------------------------------------------------------------
+        # P3.45.8: covered-slot integrity. An existing file is NOT
+        # proof — validate the slot against the current structure and
+        # (when the caller provided the current decomposition) the
+        # content identity chain slot -> current part -> asset.
+        # ------------------------------------------------------------
+        if parts is None:
+            # Structure-evidence tier: the only provable failure here is
+            # a Block that no longer exists in the current text.
+            block_id = slot.get("block_id")
+            if ids is not None and block_id and block_id not in ids:
+                blockers.append(
+                    "'{0}' still has audio, but its Block no longer "
+                    "exists in the current text — the audio cannot be "
+                    "used. Run Generate Long to re-materialise the "
+                    "structure".format(label))
+                continue
+            sources.append(_source(slot, asset, rel))
+            continue
+        slot_sha = slot.get("content_sha")
+        asset_sha = asset.get("content_sha")
+        entry = parts_by_slot.get(slot_id)
+        if entry is not None:
+            cur_sha = entry.get("content_sha")
+            if (slot_sha and cur_sha and slot_sha == cur_sha
+                    and asset_sha == cur_sha):
+                # Proven: unchanged position, unchanged expected content,
+                # audio generated for exactly that content.
+                sources.append(_source(slot, asset, rel))
+            elif not slot_sha:
+                blockers.append(
+                    "'{0}' was recorded before content-identity "
+                    "provenance existed — its audio cannot be proven to "
+                    "match the current text. Run Generate Long (review "
+                    "mode re-materialises the structure) and regenerate "
+                    "this part".format(label))
+            elif slot_sha != cur_sha:
+                blockers.append(
+                    "'{0}' — the current text at this part's position no "
+                    "longer matches the recorded generation content. "
+                    "Regenerate this part (or run Generate Long)".format(
+                        label))
+            elif asset_sha is None:
+                blockers.append(
+                    "'{0}' — the existing audio predates content-identity "
+                    "provenance and cannot be proven to match the current "
+                    "text. Regenerate this part".format(label))
+            else:
+                blockers.append(
+                    "'{0}' — the existing audio was generated for a "
+                    "previous version of this text. Regenerate this "
+                    "part".format(label))
+            continue
+        # The slot's position no longer exists in the current
+        # decomposition (deleted block, re-detect replacing ids, changed
+        # decomposition). Reconcile ONLY on an unambiguous content match.
+        if not slot_sha:
+            blockers.append(
+                "'{0}' was recorded before content-identity provenance "
+                "existed — its audio cannot be proven to match the "
+                "current text. Run Generate Long (review mode "
+                "re-materialises the structure) and regenerate this "
+                "part".format(label))
+            continue
+        if asset_sha is None or asset_sha != slot_sha:
+            if asset_sha is None:
+                blockers.append(
+                    "'{0}' — the existing audio predates content-identity "
+                    "provenance and cannot be proven to match the current "
+                    "text. Run Generate Long".format(label))
+            else:
+                blockers.append(
+                    "'{0}' — the existing audio was generated for a previous "
+                    "version of this text and its Block no longer exists. "
+                    "Run Generate Long".format(label))
+            continue
+        matches = [e for e in parts
+                   if e.get("content_sha") == slot_sha]
+        if len(matches) == 1:
+            # Uniquely provable block-ID replacement (e.g. Re-detect over
+            # unchanged text): the audio IS this content.
+            sources.append(_source(slot, asset, rel))
+        elif not matches:
+            blockers.append(
+                "'{0}' — the recorded content no longer exists in the "
+                "current text. Run Generate Long to re-materialise the "
+                "structure".format(label))
+        else:
+            blockers.append(
+                "'{0}' — the same text now appears more than once in the "
+                "current structure, so the existing audio cannot be "
+                "matched unambiguously. Run Generate Long".format(label))
     return sources, blockers
 
 
@@ -1156,6 +1373,16 @@ def register_generation_result(project: Any, result: Any,
         # Stamped HERE, at the single write point, from the request →
         # result passthrough — the asset never re-derives membership.
         "slot_id": getattr(result, "slot_id", None),
+        # P3.45.8: the content identity of the generation input actually
+        # sent (result.prompt IS the final tokenised prompt the Engine
+        # received — Engine sets it verbatim from the request). The asset
+        # side of the fail-closed Combine/Re-add identity gate: proves the
+        # audio was generated for the SAME content the slot expects.
+        # None for results without a prompt (legacy/manual).
+        "content_sha": part_content_sha(
+            getattr(result, "prompt", None),
+            getattr(result, "speaker", None),
+            getattr(result, "character_id", None)),
     }
     assets = getattr(scene, "audio_assets", None)
     if assets is None:

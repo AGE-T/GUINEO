@@ -1120,6 +1120,28 @@ class _MWHarness(unittest.TestCase):
             auto_play=False)
 
     def start_long(self, parts, review=False):
+        # P3.45.8: the real app always generates over the EDITOR's text —
+        # restore the parts' texts + blocks through the production scene
+        # path before the structure event, so the Combine-time
+        # content-identity validation can PROVE the generated content
+        # (a blank editor is POSITIVE evidence that no content survives
+        # and would fail the combine closed).
+        from engine.narration_blocks import PromptBlock
+        blocks = []
+        texts = []
+        pos = 0
+        for i, p in enumerate(parts):
+            t = p.text
+            blocks.append(PromptBlock(
+                id=(p.source_block_id
+                    or "blk{0:02d}".format(i + 1)),
+                start_offset=pos, end_offset=pos + len(t)))
+            texts.append(t)
+            pos += len(t) + 1
+        self.scene.text = "\n".join(texts)
+        self.scene.narration_blocks = [b.to_dict() for b in blocks]
+        self.win._load_scene_state(self.scene)
+        self.win._active_scene = self.scene
         self.win._start_long_narration(parts, None, self.params(), {},
                                        review_mode=review)
 
